@@ -13,17 +13,20 @@ try {
 }
 
 // Path to users data file (fallback)
-const usersFilePath = path.join(__dirname, '../data/users.json');
+const usersFilePath = process.env.VERCEL 
+  ? path.join('/tmp', 'users.json') 
+  : path.join(__dirname, '../data/users.json');
 
-// Ensure data directory exists
-const dataDir = path.dirname(usersFilePath);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-// Initialize users file if it doesn't exist
-if (!fs.existsSync(usersFilePath)) {
-  fs.writeFileSync(usersFilePath, JSON.stringify([], null, 2));
+try {
+  const dataDir = path.dirname(usersFilePath);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  if (!fs.existsSync(usersFilePath)) {
+    fs.writeFileSync(usersFilePath, JSON.stringify([], null, 2));
+  }
+} catch (e) {
+  console.log('File storage init notice:', e.message);
 }
 
 // Check if MongoDB is connected

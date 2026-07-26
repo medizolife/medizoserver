@@ -12,15 +12,20 @@ try {
 }
 
 // Path to prescriptions data file
-const prescriptionsFilePath = path.join(__dirname, '../data/prescriptions.json');
+const prescriptionsFilePath = process.env.VERCEL 
+  ? path.join('/tmp', 'prescriptions.json') 
+  : path.join(__dirname, '../data/prescriptions.json');
 
-// Ensure data directory and file exist
-const dataDir = path.dirname(prescriptionsFilePath);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-if (!fs.existsSync(prescriptionsFilePath)) {
-  fs.writeFileSync(prescriptionsFilePath, JSON.stringify([], null, 2));
+try {
+  const dataDir = path.dirname(prescriptionsFilePath);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  if (!fs.existsSync(prescriptionsFilePath)) {
+    fs.writeFileSync(prescriptionsFilePath, JSON.stringify([], null, 2));
+  }
+} catch (e) {
+  console.log('Prescription file storage init notice:', e.message);
 }
 
 // Check if MongoDB is connected
