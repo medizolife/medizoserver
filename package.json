@@ -1,0 +1,41 @@
+{
+  "name": "healthcare-management-server",
+  "version": "1.0.0",
+  "description": "Backend for Healthcare Management System",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "migrate": "node scripts/migrate-to-mongo.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "healthcare",
+    "prescription",
+    "management",
+    "express",
+    "node"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "google-auth-library": "^10.5.0",
+    "html2canvas": "^1.4.1",
+    "jsonwebtoken": "^9.0.0",
+    "jspdf": "^3.0.2",
+    "mongoose": "^9.0.1",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.2",
+    "nodemailer": "^6.9.1",
+    "pdfkit": "^0.17.2",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}

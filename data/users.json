@@ -1,0 +1,36 @@
+[
+  {
+    "id": "1785030099934",
+    "firstName": "Dr. John",
+    "lastName": "Smith",
+    "email": "doctor@test.com",
+    "password": "$2a$10$A/dxd.QNPByl.4iXSgPbY.aKSg7Eas4caLecNJU6NrXG20GSLjgCu",
+    "role": "doctor",
+    "specialization": "General Physician",
+    "licenseNumber": "DOC123456",
+    "createdAt": "2026-07-26T01:41:39.934Z"
+  },
+  {
+    "id": "1785030100031",
+    "firstName": "Sarah",
+    "lastName": "Johnson",
+    "email": "patient@test.com",
+    "password": "$2a$10$0ZSXDcuRHmVLodQPTKKP6Omdrl1MjHw8QNn.0rJeJpXoAfWMJHy66",
+    "role": "patient",
+    "dateOfBirth": "1990-05-15",
+    "gender": "female",
+    "phone": "555-0123",
+    "address": "123 Main St, City",
+    "bloodType": "O+",
+    "allergies": [
+      "Penicillin"
+    ],
+    "chronicConditions": [],
+    "emergencyContact": {
+      "name": "Mike Johnson",
+      "relationship": "Husband",
+      "phone": "555-0124"
+    },
+    "createdAt": "2026-07-26T01:41:40.032Z"
+  }
+]
