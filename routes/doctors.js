@@ -10,9 +10,15 @@ const { doctor } = require('../middleware/auth');
 const Image = require('../models/ImageModel');
 
 // Ensure uploads directory exists (fallback for when MongoDB is not available)
-const uploadsDir = path.join(__dirname, '../uploads/doctors');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+const uploadsDir = process.env.VERCEL 
+  ? '/tmp/uploads/doctors' 
+  : path.join(__dirname, '../uploads/doctors');
+try {
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+} catch (e) {
+  console.log('Uploads dir notice:', e.message);
 }
 
 // Check if MongoDB is connected

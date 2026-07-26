@@ -16,9 +16,9 @@ try {
 const usersFilePath = process.env.VERCEL 
   ? path.join('/tmp', 'users.json') 
   : path.join(__dirname, '../data/users.json');
+const dataDir = path.dirname(usersFilePath);
 
 try {
-  const dataDir = path.dirname(usersFilePath);
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
