@@ -3,16 +3,14 @@ const path = require('path');
 
 /**
  * Get the MongoDB URI from environment variables or a local config file.
- * Local file (server/config/mongo.json) should have one of these shapes:
- * { "MONGO_URI": "mongodb+srv://..." }
- * or
- * { "uri": "mongodb+srv://..." }
- * The local file is intended for development-only and should be added to .gitignore.
+ * Strips surrounding quotes automatically if passed in Vercel environment variables.
  */
 function getMongoUri() {
   // Prefer environment variables
   const envUri = process.env.MONGO_URI || process.env.MONGODB_URI;
-  if (envUri) return envUri;
+  if (envUri) {
+    return envUri.trim().replace(/^["']|["']$/g, '');
+  }
 
   // Fallback to local config file
   try {
@@ -21,7 +19,7 @@ function getMongoUri() {
       const raw = fs.readFileSync(configPath, 'utf8');
       const data = JSON.parse(raw);
       const uri = data.MONGO_URI || data.MONGODB_URI || data.uri || data.mongoUri || null;
-      if (uri) return uri;
+      if (uri) return uri.trim().replace(/^["']|["']$/g, '');
     }
   } catch (err) {
     console.error('Failed to read local mongo config:', err.message);
