@@ -60,20 +60,22 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Middleware: Enable CORS for Vercel, localhost & custom domains
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+  'https://medizo-health.vercel.app',
+  'https://medizo.life',
+  'https://www.medizo.life',
+  process.env.CLIENT_URL
+].filter(Boolean);
+
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    const allowed = [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:3002',
-      'https://medizo.life',
-      'https://www.medizo.life'
-    ];
-    
-    if (allowed.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.github.io')) {
+    if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || origin.endsWith('.github.io')) {
       return callback(null, true);
     }
     return callback(null, true); // Allow all origins for API accessibility
