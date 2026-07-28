@@ -391,7 +391,7 @@ router.delete('/:id', doctor, async (req, res) => {
  * @desc    Download prescription as PDF
  * @access  Private
  */
-router.get('/:id/download', auth, async (req, res) => {
+router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
   try {
     const prescriptionId = req.params.id;
     const userId = req.user.id;
