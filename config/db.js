@@ -21,10 +21,25 @@ const connectDB = async () => {
 
   try {
     console.log('Attempting to connect to MongoDB...');
-    const conn = await mongoose.connect(mongoUri, {
-      serverSelectionTimeoutMS: 4000,
-      connectTimeoutMS: 5000,
-    });
+    let conn;
+    try {
+      conn = await mongoose.connect(mongoUri, {
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 5000,
+      });
+    } catch (firstErr) {
+      if (firstErr.message && firstErr.message.includes('querySrv')) {
+        console.log('DNS SRV lookup failed, retrying with public DNS resolvers...');
+        const dns = require('dns');
+        try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch (e) {}
+        conn = await mongoose.connect(mongoUri, {
+          serverSelectionTimeoutMS: 5000,
+          connectTimeoutMS: 5000,
+        });
+      } else {
+        throw firstErr;
+      }
+    }
 
     isConnected = true;
     console.log(`MongoDB connected: ${conn.connection.host}`);

@@ -159,19 +159,20 @@ const findPrescriptionById = async (id) => {
  * @returns {Object} Created prescription object
  */
 const createPrescription = async (prescriptionData) => {
-  // Generate prescription ID
-  const prescriptionId = isMongoConnected() ? new mongoose.Types.ObjectId().toString() : Date.now().toString();
-  
   if (isMongoConnected() && PrescriptionModel) {
     try {
+      // Let MongoDB auto-generate the _id — don't pre-set it
       const newPrescription = new PrescriptionModel({
-        _id: prescriptionId,
         ...prescriptionData,
-        qrCode: prescriptionId,  // Store only the ObjectId for QR verification
         status: 'active'
       });
       await newPrescription.save();
-      console.log('Prescription saved to MongoDB');
+
+      // Set qrCode to the ACTUAL saved _id so QR scan always matches
+      newPrescription.qrCode = newPrescription._id.toString();
+      await newPrescription.save();
+
+      console.log('Prescription saved to MongoDB, _id:', newPrescription._id, 'qrCode:', newPrescription.qrCode);
       return newPrescription.toJSON();
     } catch (error) {
       console.error('MongoDB createPrescription error:', error);
@@ -180,6 +181,7 @@ const createPrescription = async (prescriptionData) => {
   }
   
   // Fallback to JSON file
+  const prescriptionId = Date.now().toString();
   const prescriptions = getPrescriptionsSync();
   
   // Create new prescription
