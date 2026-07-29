@@ -61,37 +61,61 @@ router.get('/', auth, async (req, res) => {
       prescriptions = await findPrescriptionsByDoctorId(userId);
       console.log('Found', prescriptions.length, 'prescriptions for doctor');
       
-      // Enhance with patient information
+      // Enhance with patient information safely
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
-        const patient = await findUserById(prescription.patientId);
-        return {
-          ...prescription,
-          patientName: patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown Patient',
-          patientEmail: patient ? patient.email : 'N/A'
-        };
+        try {
+          let patient = null;
+          if (prescription.patientId) {
+            patient = await findUserById(prescription.patientId);
+          }
+          return {
+            ...prescription,
+            patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
+            patientEmail: patient ? patient.email || 'N/A' : 'N/A'
+          };
+        } catch (err) {
+          console.error('Error enhancing prescription with patient info:', err);
+          return {
+            ...prescription,
+            patientName: 'Unknown Patient',
+            patientEmail: 'N/A'
+          };
+        }
       }));
     } else if (role === 'patient') {
       prescriptions = await findPrescriptionsByPatientId(userId);
       console.log('Found', prescriptions.length, 'prescriptions for patient');
       
-      // Enhance with doctor information
+      // Enhance with doctor information safely
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
-        const doctor = await findUserById(prescription.doctorId);
-        return {
-          ...prescription,
-          doctorName: doctor ? `Dr. ${doctor.firstName} ${doctor.lastName}` : 'Unknown Doctor',
-          doctorSpecialization: doctor ? doctor.specialization : 'N/A'
-        };
+        try {
+          let doctor = null;
+          if (prescription.doctorId) {
+            doctor = await findUserById(prescription.doctorId);
+          }
+          return {
+            ...prescription,
+            doctorName: doctor ? `Dr. ${doctor.firstName || ''} ${doctor.lastName || ''}`.trim() : 'Unknown Doctor',
+            doctorSpecialization: doctor ? doctor.specialization || 'General Physician' : 'General Physician'
+          };
+        } catch (err) {
+          console.error('Error enhancing prescription with doctor info:', err);
+          return {
+            ...prescription,
+            doctorName: 'Unknown Doctor',
+            doctorSpecialization: 'General Physician'
+          };
+        }
       }));
     }
     
     // Sort by creation date (newest first)
-    prescriptions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    prescriptions.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
     
-    res.json(prescriptions);
+    res.json(Array.isArray(prescriptions) ? prescriptions : []);
   } catch (error) {
     console.error('Get prescriptions error:', error);
-    res.status(500).json({ message: 'Server error' });
+    res.json([]);
   }
 });
 
