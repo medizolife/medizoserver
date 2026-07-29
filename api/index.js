@@ -35,21 +35,42 @@ const initializeApp = async () => {
   }
 };
 
-// Enable CORS for all frontend requests
+// Enable CORS for all frontend requests & handle preflight OPTIONS immediately
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
 app.use(cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token', 'Accept']
 }));
 
 app.use(express.json());
 app.use(cookieParser());
 
-// Initialize DB on cold start
+// Initialize DB on cold start (non-blocking for errors)
 app.use(async (req, res, next) => {
   if (!isInitialized) {
-    await initializeApp();
+    try {
+      await initializeApp();
+    } catch (e) {
+      console.error('Cold start init error:', e);
+    }
   }
   next();
 });
