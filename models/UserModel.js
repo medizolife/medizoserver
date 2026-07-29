@@ -168,6 +168,26 @@ const userSchema = new mongoose.Schema({
     name: { type: String, default: '' },
     relationship: { type: String, default: '' },
     phone: { type: String, default: '' }
+  },
+  // DigiLocker verification (doctors only)
+  digilockerVerified: {
+    type: Boolean,
+    default: false
+  },
+  digilockerProfile: {
+    verified: { type: Boolean, default: false },
+    name: { type: String, default: '' },
+    dob: { type: String, default: '' },
+    gender: { type: String, default: '' },
+    email: { type: String, default: '' },
+    mobile: { type: String, default: '' },
+    maskedAadhaar: { type: String, default: '' },
+    digilockerid: { type: String, default: '' },
+    referenceKey: { type: String, default: '' },
+    eaadhaar: { type: String, default: '' },
+    panNumber: { type: String, default: '' },
+    drivingLicence: { type: String, default: '' },
+    linkedAt: { type: Date }
   }
 }, {
   timestamps: true

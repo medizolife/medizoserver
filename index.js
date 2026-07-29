@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const mongoose = require('mongoose');
 const morgan = require('morgan');
 const path = require('path');
@@ -86,6 +87,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(cookieParser());
 app.use(morgan('dev'));
 
 // Middleware to ensure DB connection on serverless calls
@@ -105,6 +107,7 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/doctors', doctorRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
+app.use('/api/digilocker', require('./routes/digilocker'));
 
 // Basic route for testing
 app.get('/', (req, res) => {

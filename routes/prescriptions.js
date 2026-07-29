@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const { 
   createPrescription, 
   findPrescriptionById, 
@@ -11,6 +12,35 @@ const {
 const { findUserById } = require('../models/user');
 const { auth, doctor } = require('../middleware/auth');
 const { sendPrescriptionNotification } = require('../services/email');
+
+// Try to import the Mongoose UserModel for DigiLocker check
+let UserModel;
+try {
+  UserModel = require('../models/UserModel');
+} catch (e) {
+  UserModel = null;
+}
+
+/**
+ * Check if a doctor is DigiLocker verified
+ * @param {string} doctorId - Doctor's user ID
+ * @returns {boolean} Whether the doctor is verified
+ */
+const isDoctorVerified = async (doctorId) => {
+  // Check via Mongoose model if available
+  if (mongoose.connection.readyState === 1 && UserModel) {
+    try {
+      const user = await UserModel.findById(doctorId).select('digilockerVerified').lean();
+      return user?.digilockerVerified === true;
+    } catch (err) {
+      console.error('DigiLocker verification check error:', err);
+    }
+  }
+  
+  // Fallback: check from user.js
+  const user = await findUserById(doctorId);
+  return user?.digilockerVerified === true;
+};
 
 /**
  * @route   GET /api/prescriptions
@@ -151,6 +181,15 @@ router.get('/:id', auth, async (req, res) => {
  */
 router.post('/', doctor, async (req, res) => {
   try {
+    // DigiLocker verification guard
+    const verified = await isDoctorVerified(req.user.id);
+    if (!verified) {
+      return res.status(403).json({
+        message: 'You must verify your identity via DigiLocker before creating prescriptions',
+        requiresVerification: true
+      });
+    }
+
     const { 
       patientId,
       patientEmail,
@@ -274,6 +313,15 @@ router.post('/', doctor, async (req, res) => {
  */
 router.put('/:id', doctor, async (req, res) => {
   try {
+    // DigiLocker verification guard
+    const verified = await isDoctorVerified(req.user.id);
+    if (!verified) {
+      return res.status(403).json({
+        message: 'You must verify your identity via DigiLocker before updating prescriptions',
+        requiresVerification: true
+      });
+    }
+
     const prescriptionId = req.params.id;
     const doctorId = req.user.id;
     const prescription = await findPrescriptionById(prescriptionId);
