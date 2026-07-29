@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const mongoose = require('mongoose');
 const path = require('path');
 const fs = require('fs');
@@ -14,6 +15,7 @@ const doctorRoutes = require('../routes/doctors');
 const patientRoutes = require('../routes/patients');
 const prescriptionRoutes = require('../routes/prescriptions');
 const userRoutes = require('../routes/users');
+const digilockerRoutes = require('../routes/digilocker');
 
 // Import user model for demo users
 const { createDemoUsers } = require('../models/user');
@@ -42,6 +44,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(cookieParser());
 
 // Initialize DB on cold start
 app.use(async (req, res, next) => {
@@ -57,6 +60,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/doctors', doctorRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
+app.use('/api/digilocker', digilockerRoutes);
 
 // Routes without /api prefix (for Vercel rewrites)
 app.use('/auth', authRoutes);
@@ -64,6 +68,7 @@ app.use('/users', userRoutes);
 app.use('/doctors', doctorRoutes);
 app.use('/patients', patientRoutes);
 app.use('/prescriptions', prescriptionRoutes);
+app.use('/digilocker', digilockerRoutes);
 
 // Root & Health check
 app.get('/api/health', (req, res) => {

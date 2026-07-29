@@ -8,8 +8,7 @@ const { findUserById } = require('../models/user');
  * @param {Function} next - Express next middleware function
  */
 const auth = async (req, res, next) => {
-  // Get token from header
-  const token = req.header('x-auth-token') || req.header('Authorization')?.replace('Bearer ', '');
+  const token = req.header('x-auth-token') || req.header('Authorization')?.replace('Bearer ', '') || req.query.token;
   
   // Check if no token
   if (!token) {
