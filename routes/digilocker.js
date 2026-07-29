@@ -40,9 +40,16 @@ router.get('/authorize', doctor, (req, res) => {
     .update(codeVerifier)
     .digest('base64url');
 
-  // Store the doctor's user ID in the state so the callback can identify them
-  // Format: randomState|userId
-  const stateWithUser = `${state}|${req.user.id}`;
+  // Store the doctor's user ID and originating client URL in the state
+  // Format: randomState|userId|encodedClientUrl
+  let originatingClientUrl = req.query.client_url || req.headers.referer || req.headers.origin || process.env.CLIENT_URL || 'https://m.medizo.life';
+  try {
+    const parsed = new URL(originatingClientUrl);
+    originatingClientUrl = `${parsed.protocol}//${parsed.host}`;
+  } catch (e) {}
+  const encodedClientUrl = Buffer.from(originatingClientUrl).toString('base64url');
+
+  const stateWithUser = `${state}|${req.user.id}|${encodedClientUrl}`;
 
   // DigiLocker OAuth2 authorization URL parameters
   const params = new URLSearchParams({
@@ -141,8 +148,18 @@ router.get('/callback', async (req, res) => {
     return res.redirect(`${clientUrl}/dashboard?digilocker=error&message=Invalid+state+parameter+(cookies+may+have+been+lost)`);
   }
 
-  // Extract userId from state (format: randomState|userId)
-  const userId = state.split('|')[1];
+  // Extract userId and dynamic clientUrl from state (format: randomState|userId|encodedClientUrl)
+  const stateParts = (state || '').split('|');
+  const userId = stateParts[1];
+  let clientUrl = process.env.CLIENT_URL || 'https://m.medizo.life';
+  if (stateParts[2]) {
+    try {
+      clientUrl = Buffer.from(stateParts[2], 'base64url').toString('utf8');
+    } catch (e) {
+      console.error('[DigiLocker] Could not decode clientUrl from state:', e);
+    }
+  }
+
   if (!userId) {
     console.error('[DigiLocker] No userId in state');
     return res.redirect(`${clientUrl}/dashboard?digilocker=error&message=Invalid+state+format`);
