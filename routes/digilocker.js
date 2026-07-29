@@ -121,7 +121,7 @@ router.get('/callback', async (req, res) => {
   const clientId = process.env.DIGILOCKER_CLIENT_ID || '';
   const clientSecret = process.env.DIGILOCKER_CLIENT_SECRET || '';
   const redirectUri = process.env.DIGILOCKER_REDIRECT_URI || '';
-  const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+  let clientUrl = process.env.CLIENT_URL || 'https://m.medizo.life';
 
   const { code, state, error, error_description } = req.query;
 
@@ -151,7 +151,6 @@ router.get('/callback', async (req, res) => {
   // Extract userId and dynamic clientUrl from state (format: randomState|userId|encodedClientUrl)
   const stateParts = (state || '').split('|');
   const userId = stateParts[1];
-  let clientUrl = process.env.CLIENT_URL || 'https://m.medizo.life';
   if (stateParts[2]) {
     try {
       clientUrl = Buffer.from(stateParts[2], 'base64url').toString('utf8');
