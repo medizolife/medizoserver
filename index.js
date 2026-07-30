@@ -107,6 +107,7 @@ app.use('/api/doctors', doctorRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/digilocker', require('./routes/digilocker'));
+app.use('/api/admin', require('./routes/admin'));
 
 // Basic route for testing
 app.get('/', (req, res) => {

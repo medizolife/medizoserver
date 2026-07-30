@@ -16,6 +16,7 @@ const patientRoutes = require('../routes/patients');
 const prescriptionRoutes = require('../routes/prescriptions');
 const userRoutes = require('../routes/users');
 const digilockerRoutes = require('../routes/digilocker');
+const adminRoutes = require('../routes/admin');
 
 // Import user model for demo users
 const { createDemoUsers } = require('../models/user');
@@ -82,6 +83,7 @@ app.use('/api/doctors', doctorRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/digilocker', digilockerRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Routes without /api prefix (for Vercel rewrites)
 app.use('/auth', authRoutes);
@@ -90,6 +92,7 @@ app.use('/doctors', doctorRoutes);
 app.use('/patients', patientRoutes);
 app.use('/prescriptions', prescriptionRoutes);
 app.use('/digilocker', digilockerRoutes);
+app.use('/admin', adminRoutes);
 
 // Root & Health check
 app.get('/api/health', (req, res) => {

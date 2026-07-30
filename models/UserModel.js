@@ -40,10 +40,23 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['doctor', 'patient'],
+    enum: ['doctor', 'patient', 'pharmacist', 'admin'],
     required: true
   },
-  // Doctor-specific fields
+  status: {
+    type: String,
+    enum: ['active', 'deactivated'],
+    default: 'active'
+  },
+  // Pharmacist & Doctor specific fields
+  pharmacyName: {
+    type: String,
+    default: ''
+  },
+  pharmacyAddress: {
+    type: String,
+    default: ''
+  },
   specialization: {
     type: String,
     default: ''

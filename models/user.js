@@ -364,7 +364,31 @@ const createDemoUsers = async () => {
         }
       });
       
-      console.log('Demo users created: doctor@test.com / patient@test.com (password: password123)');
+      // Create admin user
+      await createUser({
+        firstName: 'System',
+        lastName: 'Admin',
+        email: 'admin@medizo.life',
+        password: 'password123',
+        role: 'admin',
+        status: 'active'
+      });
+
+      // Create pharmacist
+      await createUser({
+        firstName: 'Robert',
+        lastName: 'Pharm',
+        email: 'pharmacist@test.com',
+        password: 'password123',
+        role: 'pharmacist',
+        pharmacyName: 'Medizo Care Pharmacy',
+        licenseNumber: 'PHARM-88219',
+        pharmacyAddress: '456 Healthcare Blvd, Suite 100',
+        phone: '+1 555-987-6543',
+        status: 'active'
+      });
+
+      console.log('Demo users created: doctor@test.com / patient@test.com / admin@medizo.life / pharmacist@test.com (password: password123)');
     }
   } catch (error) {
     console.error('Error creating demo users:', error);
