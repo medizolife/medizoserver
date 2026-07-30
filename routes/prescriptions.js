@@ -107,6 +107,38 @@ router.get('/', auth, async (req, res) => {
           };
         }
       }));
+    } else if (role === 'pharmacist' || role === 'admin') {
+      // Pharmacists and admins can see ALL prescriptions
+      const PrescriptionModel = require('../models/PrescriptionModel');
+      if (mongoose.connection.readyState === 1 && PrescriptionModel) {
+        try {
+          const docs = await PrescriptionModel.find({}).sort({ createdAt: -1 }).lean();
+          prescriptions = docs.map(d => ({ ...d, id: d._id?.toString() || d.id }));
+        } catch (err) {
+          console.log('[Prescriptions] Mongo pharmacist fetch error:', err.message);
+          prescriptions = [];
+        }
+      }
+      console.log('Found', prescriptions.length, 'prescriptions for pharmacist/admin');
+
+      // Enhance with patient & doctor info
+      prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
+        try {
+          let patient = null;
+          let doc = null;
+          if (prescription.patientId) patient = await findUserById(prescription.patientId);
+          if (prescription.doctorId) doc = await findUserById(prescription.doctorId);
+          return {
+            ...prescription,
+            patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
+            patientEmail: patient ? patient.email || 'N/A' : 'N/A',
+            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
+            doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician'
+          };
+        } catch (err) {
+          return { ...prescription, patientName: 'Unknown Patient', doctorName: 'Unknown Doctor' };
+        }
+      }));
     }
     
     // Sort by creation date (newest first)
@@ -116,6 +148,76 @@ router.get('/', auth, async (req, res) => {
   } catch (error) {
     console.error('Get prescriptions error:', error);
     res.json([]);
+  }
+});
+
+/**
+ * @route   GET /api/prescriptions/lookup/:code
+ * @desc    Lookup prescription by QR code string or partial ID
+ * @access  Private (Pharmacist / Admin)
+ */
+router.get('/lookup/:code', auth, async (req, res) => {
+  try {
+    const code = req.params.code;
+    console.log('[Prescriptions] Lookup by code/id:', code);
+    
+    const PrescriptionModel = require('../models/PrescriptionModel');
+    let prescription = null;
+
+    if (mongoose.connection.readyState === 1 && PrescriptionModel) {
+      // Try exact _id match first
+      try {
+        if (mongoose.Types.ObjectId.isValid(code)) {
+          prescription = await PrescriptionModel.findById(code).lean();
+        }
+      } catch (e) { /* not a valid ObjectId */ }
+      
+      // Try QR code string match
+      if (!prescription) {
+        prescription = await PrescriptionModel.findOne({ qrCode: code }).lean();
+      }
+      
+      // Try partial ID match (last N chars)
+      if (!prescription) {
+        const docs = await PrescriptionModel.find({}).lean();
+        prescription = docs.find(d => {
+          const id = (d._id?.toString() || '');
+          return id.endsWith(code) || id.includes(code);
+        });
+      }
+    }
+
+    if (!prescription) {
+      // Fallback to in-memory
+      prescription = await findPrescriptionById(code);
+    }
+    
+    if (!prescription) {
+      return res.status(404).json({ success: false, message: 'Prescription not found for this QR code or ID' });
+    }
+    
+    // Enhance with patient & doctor info
+    let patient = null;
+    let doc = null;
+    try {
+      if (prescription.patientId) patient = await findUserById(prescription.patientId);
+      if (prescription.doctorId) doc = await findUserById(prescription.doctorId);
+    } catch (e) { /* ignore enhancement errors */ }
+
+    const enhanced = {
+      ...prescription,
+      id: prescription._id?.toString() || prescription.id,
+      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : 'Unknown Patient',
+      patientEmail: patient ? patient.email || 'N/A' : 'N/A',
+      doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
+      doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician',
+      doctorVerified: doc?.digilockerVerified || false
+    };
+
+    res.json({ success: true, prescription: enhanced });
+  } catch (error) {
+    console.error('Prescription lookup error:', error);
+    res.status(500).json({ success: false, message: 'Server error during lookup' });
   }
 });
 
