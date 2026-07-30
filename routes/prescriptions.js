@@ -603,7 +603,7 @@ router.delete('/:id', doctor, async (req, res) => {
 router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
   try {
     const prescriptionId = req.params.id;
-    const userId = req.user.id;
+    const userId = (req.user.id || req.user._id)?.toString();
     const role = req.user.role;
     
     const prescription = await findPrescriptionById(prescriptionId);
@@ -614,34 +614,61 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
       return res.status(404).json({ message: 'Prescription not found' });
     }
     
-    // Check access permissions - convert to strings for comparison
-    const prescPatientId = prescription.patientId?.toString() || prescription.patientId;
-    const prescDoctorId = prescription.doctorId?.toString() || prescription.doctorId;
-    
-    console.log('Download access check:', { userId, role, prescPatientId, prescDoctorId });
-    
-    if (role === 'patient' && prescPatientId !== userId) {
-      return res.status(403).json({ message: 'Access denied' });
-    } else if (role === 'doctor' && prescDoctorId !== userId) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-    
-    // Get patient and doctor details
-    const patient = await findUserById(prescription.patientId);
-    const doctor = await findUserById(prescription.doctorId);
-    
-    if (!patient || !doctor) {
-      return res.status(500).json({ message: 'Failed to retrieve user information' });
-    }
-    
+    // Check access permissions - convert to strings safely whether string or object
+    const prescPatientId = (typeof prescription.patientId === 'object' && prescription.patientId?._id)
+      ? prescription.patientId._id.toString()
+      : prescription.patientId?.toString();
+    const prescDoctorId = (typeof prescription.doctorId === 'object' && prescription.doctorId?._id)
+      ? prescription.doctorId._id.toString()
+      : prescription.doctorId?.toString();
+    const currentUserId = userId?.toString();
 
+    console.log('Download access check:', { currentUserId, role, prescPatientId, prescDoctorId });
+    
+    if (role === 'patient') {
+      if (prescPatientId && currentUserId && prescPatientId !== currentUserId) {
+        const patientUser = await findUserById(prescription.patientId);
+        if (!patientUser || patientUser.email?.toLowerCase() !== req.user.email?.toLowerCase()) {
+          return res.status(403).json({ message: 'Access denied: You can only download your own prescriptions' });
+        }
+      }
+    }
+    
+    // Get patient and doctor details (with robust fallbacks if user lookup fails)
+    let patient = await findUserById(prescription.patientId);
+    let doctor = await findUserById(prescription.doctorId);
+    
+    if (!patient) {
+      patient = {
+        id: prescPatientId || 'patient-id',
+        firstName: prescription.patientName ? prescription.patientName.split(' ')[0] : (prescription.patientFirstName || 'Patient'),
+        lastName: prescription.patientName ? prescription.patientName.split(' ').slice(1).join(' ') : (prescription.patientLastName || ''),
+        email: prescription.patientEmail || '',
+        dateOfBirth: prescription.patientDOB || prescription.patientDateOfBirth || '',
+        gender: prescription.patientGender || '',
+        phone: prescription.patientPhone || prescription.contactNumber || ''
+      };
+    }
+    
+    if (!doctor) {
+      doctor = {
+        id: prescDoctorId || 'doctor-id',
+        firstName: prescription.doctorName ? prescription.doctorName.split(' ')[0] : (prescription.doctorFirstName || 'Doctor'),
+        lastName: prescription.doctorName ? prescription.doctorName.split(' ').slice(1).join(' ') : (prescription.doctorLastName || ''),
+        specialization: prescription.doctorSpecialization || prescription.specialization || 'General Practitioner',
+        licenseNumber: prescription.doctorLicenseNumber || prescription.licenseNumber || ''
+      };
+    }
+    
     // Generate PDF using the comprehensive prescription PDF generator
     const { generatePrescriptionPDF } = require('../services/pdfGenerator');
     await generatePrescriptionPDF(res, prescriptionId, prescription, patient, doctor);
 
   } catch (error) {
     console.error('Download prescription error:', error);
-    res.status(500).json({ message: 'Server error' });
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Server error generating PDF' });
+    }
   }
 });
 
