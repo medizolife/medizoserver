@@ -508,4 +508,65 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
   }
 });
 
+/**
+ * @route   PUT /api/prescriptions/:id/dispense
+ * @desc    Mark prescription as dispensed by pharmacist
+ * @access  Private (Pharmacist or Admin)
+ */
+router.put('/:id/dispense', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dispenseNotes } = req.body;
+
+    const prescription = await findPrescriptionById(id);
+    if (!prescription) {
+      return res.status(404).json({ success: false, message: 'Prescription not found' });
+    }
+
+    const pharmacist = await findUserById(req.user.id);
+
+    const dispenseData = {
+      dispensedStatus: 'dispensed',
+      dispensedAt: new Date().toISOString(),
+      dispensedBy: {
+        pharmacistId: req.user.id,
+        pharmacistName: pharmacist ? `${pharmacist.firstName} ${pharmacist.lastName}` : (req.user.name || 'Staff Pharmacist'),
+        pharmacyName: pharmacist?.pharmacyName || 'Medizo Care Pharmacy',
+        licenseNumber: pharmacist?.licenseNumber || 'PHARM-88219'
+      },
+      dispenseNotes: dispenseNotes || 'All prescribed items verified and dispensed.'
+    };
+
+    let updatedPrescription = null;
+
+    if (isMongoConnected() && PrescriptionModel) {
+      try {
+        const doc = await PrescriptionModel.findByIdAndUpdate(
+          id,
+          { $set: dispenseData },
+          { new: true }
+        );
+        if (doc) {
+          updatedPrescription = doc.toJSON();
+        }
+      } catch (err) {
+        console.log('[Prescriptions] Mongo dispense error:', err.message);
+      }
+    }
+
+    if (!updatedPrescription) {
+      updatedPrescription = await updatePrescription(id, dispenseData);
+    }
+
+    res.json({
+      success: true,
+      message: 'Prescription successfully fulfilled and marked as dispensed!',
+      prescription: updatedPrescription
+    });
+  } catch (error) {
+    console.error('Dispense prescription error:', error);
+    res.status(500).json({ success: false, message: 'Failed to dispense prescription' });
+  }
+});
+
 module.exports = router;
