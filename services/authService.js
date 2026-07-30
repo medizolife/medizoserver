@@ -1,9 +1,13 @@
 const { createUser, authenticateUser, findUserByEmail, findOrCreateGoogleUser } = require('../models/user');
 const { OAuth2Client } = require('google-auth-library');
 
-// Google OAuth Client ID - this should be set in environment variables
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '427324625620-qbg0q3s9cgu8kd80a9upco0m9147jo1u.apps.googleusercontent.com';
+const ALLOWED_CLIENT_IDS = [
+  GOOGLE_CLIENT_ID,
+  '427324625620-qbg0q3s9cgu8kd80a9upco0m9147jo1u.apps.googleusercontent.com',
+  '972944325297-fh67828kvguogf9coekjn6q07a2krv8o.apps.googleusercontent.com'
+].filter(Boolean);
+const googleClient = new OAuth2Client();
 
 /**
  * Verify Google ID token and extract user info
@@ -14,7 +18,7 @@ const verifyGoogleToken = async (credential) => {
   try {
     const ticket = await googleClient.verifyIdToken({
       idToken: credential,
-      audience: GOOGLE_CLIENT_ID
+      audience: ALLOWED_CLIENT_IDS
     });
     const payload = ticket.getPayload();
     return {
