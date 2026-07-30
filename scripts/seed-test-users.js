@@ -94,27 +94,33 @@ async function seedTestUsers() {
       console.log('Created new Patient account: patient@medizo.life');
     }
 
-    // 3. Create/Update Pharmacist Account
-    const pharmaData = {
-      name: 'Demo Pharmacist',
-      email: 'pharma@medizo.life',
-      password: 'password123',
-      pharmacyName: 'Medizo Central Pharmacy',
-      licenseNumber: 'PHARMA-2026-MEDIZO',
-      phone: '+1 555-0188'
-    };
+    // 3. Create/Update Pharmacist Accounts in UserModel
+    const pharmacistEmails = ['pharmacist@test.com', 'pharma@medizo.life', 'pharma@test.com'];
 
-    let existingPharma = await Pharmacist.findOne({ email: pharmaData.email });
-    if (existingPharma) {
-      existingPharma.name = pharmaData.name;
-      existingPharma.password = pharmaData.password;
-      existingPharma.pharmacyName = pharmaData.pharmacyName;
-      await existingPharma.save();
-      console.log('Updated existing Pharmacist account: pharma@medizo.life');
-    } else {
-      const newPharma = new Pharmacist(pharmaData);
-      await newPharma.save();
-      console.log('Created new Pharmacist account: pharma@medizo.life');
+    for (const email of pharmacistEmails) {
+      let existingPharma = await User.findOne({ email });
+      if (existingPharma) {
+        existingPharma.firstName = 'Medizo';
+        existingPharma.lastName = 'Pharmacist';
+        existingPharma.password = 'password123';
+        existingPharma.role = 'pharmacist';
+        existingPharma.pharmacyName = 'Medizo Central Pharmacy';
+        existingPharma.licenseNumber = 'PHARMA-2026-MEDIZO';
+        await existingPharma.save();
+        console.log(`Updated Pharmacist account in UserModel: ${email}`);
+      } else {
+        const newPharma = new User({
+          firstName: 'Medizo',
+          lastName: 'Pharmacist',
+          email,
+          password: 'password123',
+          role: 'pharmacist',
+          pharmacyName: 'Medizo Central Pharmacy',
+          licenseNumber: 'PHARMA-2026-MEDIZO'
+        });
+        await newPharma.save();
+        console.log(`Created Pharmacist account in UserModel: ${email}`);
+      }
     }
 
     console.log('\n==========================================');
