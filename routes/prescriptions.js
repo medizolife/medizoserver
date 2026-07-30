@@ -199,22 +199,39 @@ router.get('/lookup/:code', auth, async (req, res) => {
     const PrescriptionModel = require('../models/PrescriptionModel');
     let prescription = null;
 
-    if (mongoose.connection.readyState === 1 && PrescriptionModel) {
+    const dbState = mongoose.connection.readyState;
+    const dbName = mongoose.connection.name || 'unknown';
+    console.log('[Prescriptions] Lookup - DB state:', dbState, 'DB name:', dbName, 'PrescriptionModel:', !!PrescriptionModel);
+
+    if (dbState === 1 && PrescriptionModel) {
+      // Log total count for debugging
+      try {
+        const totalCount = await PrescriptionModel.countDocuments();
+        console.log('[Prescriptions] Total documents in collection:', totalCount);
+      } catch (countErr) {
+        console.log('[Prescriptions] Count error:', countErr.message);
+      }
+
       // Try exact _id match first
       try {
         if (mongoose.Types.ObjectId.isValid(code)) {
           prescription = await PrescriptionModel.findById(code).lean();
+          console.log('[Prescriptions] findById result:', prescription ? 'FOUND' : 'NOT FOUND');
         }
-      } catch (e) { /* not a valid ObjectId */ }
+      } catch (e) {
+        console.log('[Prescriptions] findById error:', e.message);
+      }
       
       // Try QR code string match
       if (!prescription) {
         prescription = await PrescriptionModel.findOne({ qrCode: code }).lean();
+        console.log('[Prescriptions] findOne qrCode result:', prescription ? 'FOUND' : 'NOT FOUND');
       }
       
       // Try partial ID match (last N chars)
       if (!prescription) {
         const docs = await PrescriptionModel.find({}).lean();
+        console.log('[Prescriptions] Total docs for partial match:', docs.length);
         prescription = docs.find(d => {
           const id = (d._id?.toString() || '');
           return id.endsWith(code) || id.includes(code);
