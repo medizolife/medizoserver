@@ -41,11 +41,35 @@ const prescriptionSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  doctorName: {
+    type: String,
+    default: ''
+  },
+  doctorSpecialization: {
+    type: String,
+    default: ''
+  },
+  doctorLicenseNumber: {
+    type: String,
+    default: ''
+  },
   patientId: {
     type: String,
     required: true
   },
+  patientName: {
+    type: String,
+    default: ''
+  },
   patientEmail: {
+    type: String,
+    default: ''
+  },
+  patientAge: {
+    type: String,
+    default: ''
+  },
+  patientGender: {
     type: String,
     default: ''
   },
