@@ -95,11 +95,24 @@ app.use('/digilocker', digilockerRoutes);
 app.use('/admin', adminRoutes);
 
 // Root & Health check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  let dbName = 'unknown';
+  let rxCount = 0;
+  try {
+    if (mongoose.connection.readyState === 1) {
+      dbName = mongoose.connection.name || 'unknown';
+      const PrescriptionModel = require('../models/PrescriptionModel');
+      if (PrescriptionModel) {
+        rxCount = await PrescriptionModel.countDocuments();
+      }
+    }
+  } catch (e) { /* ignore */ }
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    storage: mongoose.connection.readyState === 1 ? 'mongodb' : 'json'
+    storage: mongoose.connection.readyState === 1 ? 'mongodb' : 'json',
+    dbName,
+    prescriptionCount: rxCount
   });
 });
 
