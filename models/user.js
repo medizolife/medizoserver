@@ -322,17 +322,44 @@ const authenticateUser = async (email, password) => {
   };
 };
 
-/**
- * Create demo users if none exist
- */
 const createDemoUsers = async () => {
   try {
-    const users = await getUsers();
-    
-    if (users.length === 0) {
-      console.log('Creating demo users...');
-      
-      // Create doctor
+    // Check and create admin user if not exists
+    const adminUser = await findUserByEmail('admin@medizo.life');
+    if (!adminUser) {
+      console.log('Seeding admin demo user (admin@medizo.life)...');
+      await createUser({
+        firstName: 'System',
+        lastName: 'Admin',
+        email: 'admin@medizo.life',
+        password: 'password123',
+        role: 'admin',
+        status: 'active'
+      });
+    }
+
+    // Check and create pharmacist demo user if not exists
+    const pharmUser = await findUserByEmail('pharmacist@test.com');
+    if (!pharmUser) {
+      console.log('Seeding pharmacist demo user (pharmacist@test.com)...');
+      await createUser({
+        firstName: 'Robert',
+        lastName: 'Pharm',
+        email: 'pharmacist@test.com',
+        password: 'password123',
+        role: 'pharmacist',
+        pharmacyName: 'Medizo Care Pharmacy',
+        licenseNumber: 'PHARM-88219',
+        pharmacyAddress: '456 Healthcare Blvd, Suite 100',
+        phone: '+1 555-987-6543',
+        status: 'active'
+      });
+    }
+
+    // Check and create doctor demo user if not exists
+    const docUser = await findUserByEmail('doctor@test.com');
+    if (!docUser) {
+      console.log('Seeding doctor demo user (doctor@test.com)...');
       await createUser({
         firstName: 'Dr. John',
         lastName: 'Smith',
@@ -340,10 +367,15 @@ const createDemoUsers = async () => {
         password: 'password123',
         role: 'doctor',
         specialization: 'General Physician',
-        licenseNumber: 'DOC123456'
+        licenseNumber: 'DOC123456',
+        status: 'active'
       });
-      
-      // Create patient
+    }
+
+    // Check and create patient demo user if not exists
+    const patUser = await findUserByEmail('patient@test.com');
+    if (!patUser) {
+      console.log('Seeding patient demo user (patient@test.com)...');
       await createUser({
         firstName: 'Sarah',
         lastName: 'Johnson',
@@ -357,38 +389,8 @@ const createDemoUsers = async () => {
         bloodType: 'O+',
         allergies: ['Penicillin'],
         chronicConditions: [],
-        emergencyContact: {
-          name: 'Mike Johnson',
-          relationship: 'Husband',
-          phone: '555-0124'
-        }
-      });
-      
-      // Create admin user
-      await createUser({
-        firstName: 'System',
-        lastName: 'Admin',
-        email: 'admin@medizo.life',
-        password: 'password123',
-        role: 'admin',
         status: 'active'
       });
-
-      // Create pharmacist
-      await createUser({
-        firstName: 'Robert',
-        lastName: 'Pharm',
-        email: 'pharmacist@test.com',
-        password: 'password123',
-        role: 'pharmacist',
-        pharmacyName: 'Medizo Care Pharmacy',
-        licenseNumber: 'PHARM-88219',
-        pharmacyAddress: '456 Healthcare Blvd, Suite 100',
-        phone: '+1 555-987-6543',
-        status: 'active'
-      });
-
-      console.log('Demo users created: doctor@test.com / patient@test.com / admin@medizo.life / pharmacist@test.com (password: password123)');
     }
   } catch (error) {
     console.error('Error creating demo users:', error);
