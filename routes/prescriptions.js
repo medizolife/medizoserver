@@ -107,20 +107,55 @@ router.get('/', auth, async (req, res) => {
           };
         }
       }));
-    } else if (role === 'pharmacist' || role === 'admin') {
-      // Pharmacists and admins can see ALL prescriptions
+    } else if (role === 'pharmacist') {
+      // Pharmacist sees ONLY prescriptions that have been scanned and dispensed by them
       const PrescriptionModel = require('../models/PrescriptionModel');
       if (mongoose.connection.readyState === 1 && PrescriptionModel) {
         try {
-          const docs = await PrescriptionModel.find({}).sort({ createdAt: -1 }).lean();
+          const docs = await PrescriptionModel.find({
+            $or: [
+              { 'dispensedBy.pharmacistId': userId },
+              { dispensedStatus: 'dispensed' }
+            ]
+          }).sort({ updatedAt: -1 }).lean();
           prescriptions = docs.map(d => ({ ...d, id: d._id?.toString() || d.id }));
         } catch (err) {
           console.log('[Prescriptions] Mongo pharmacist fetch error:', err.message);
           prescriptions = [];
         }
       }
-      console.log('Found', prescriptions.length, 'prescriptions for pharmacist/admin');
+      console.log('Found', prescriptions.length, 'dispensed prescriptions for pharmacist:', userId);
 
+      // Enhance with patient & doctor info
+      prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
+        try {
+          let patient = null;
+          let doc = null;
+          if (prescription.patientId) patient = await findUserById(prescription.patientId);
+          if (prescription.doctorId) doc = await findUserById(prescription.doctorId);
+          return {
+            ...prescription,
+            patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
+            patientEmail: patient ? patient.email || 'N/A' : 'N/A',
+            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
+            doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician'
+          };
+        } catch (err) {
+          return { ...prescription, patientName: 'Unknown Patient', doctorName: 'Unknown Doctor' };
+        }
+      }));
+    } else if (role === 'admin') {
+      // Admins can see ALL prescriptions
+      const PrescriptionModel = require('../models/PrescriptionModel');
+      if (mongoose.connection.readyState === 1 && PrescriptionModel) {
+        try {
+          const docs = await PrescriptionModel.find({}).sort({ createdAt: -1 }).lean();
+          prescriptions = docs.map(d => ({ ...d, id: d._id?.toString() || d.id }));
+        } catch (err) {
+          console.log('[Prescriptions] Mongo admin fetch error:', err.message);
+          prescriptions = [];
+        }
+      }
       // Enhance with patient & doctor info
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
         try {
