@@ -1,22 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
 const { getUsers, createUser, updateUser, findUserById } = require('../models/user');
 const { getPrescriptions } = require('../models/prescription');
 const { auth } = require('../middleware/auth');
-
-// Try importing Mongoose models
-let UserModel;
-let PrescriptionModel;
-try {
-  UserModel = require('../models/UserModel');
-  PrescriptionModel = require('../models/PrescriptionModel');
-} catch (e) {
-  UserModel = null;
-  PrescriptionModel = null;
-}
-
-const isMongoConnected = () => mongoose.connection.readyState === 1;
 
 /**
  * Middleware: Check if user is an Admin
@@ -42,18 +28,8 @@ const adminOnly = async (req, res, next) => {
  */
 router.get('/stats', adminOnly, async (req, res) => {
   try {
-    let allUsers = [];
-    let allPrescriptions = [];
-
-    if (isMongoConnected() && UserModel && PrescriptionModel) {
-      const users = await UserModel.find({});
-      allUsers = users.map(u => u.toJSON());
-      const prescriptions = await PrescriptionModel.find({});
-      allPrescriptions = prescriptions.map(p => p.toJSON());
-    } else {
-      allUsers = await getUsers();
-      allPrescriptions = await getPrescriptions();
-    }
+    const allUsers = await getUsers();
+    const allPrescriptions = await getPrescriptions();
 
     const doctors = allUsers.filter(u => u.role === 'doctor');
     const patients = allUsers.filter(u => u.role === 'patient');
@@ -115,29 +91,16 @@ router.get('/users', adminOnly, async (req, res) => {
   try {
     const { role, search, status } = req.query;
 
-    let allUsers = [];
-    let allPrescriptions = [];
+    let allUsers = await getUsers();
+    const allPrescriptions = await getPrescriptions();
 
-    if (isMongoConnected() && UserModel && PrescriptionModel) {
-      const query = {};
-      if (role) query.role = role;
-      if (status && status !== 'all') query.status = status;
-
-      const users = await UserModel.find(query).sort({ createdAt: -1 });
-      allUsers = users.map(u => u.toJSON());
-
-      const prescriptions = await PrescriptionModel.find({});
-      allPrescriptions = prescriptions.map(p => p.toJSON());
-    } else {
-      const users = await getUsers();
-      allUsers = users;
-      if (role) {
-        allUsers = allUsers.filter(u => u.role === role);
-      }
-      if (status && status !== 'all') {
-        allUsers = allUsers.filter(u => (u.status || 'active') === status);
-      }
-      allPrescriptions = await getPrescriptions();
+    // Filter by role
+    if (role) {
+      allUsers = allUsers.filter(u => u.role === role);
+    }
+    // Filter by status
+    if (status && status !== 'all') {
+      allUsers = allUsers.filter(u => (u.status || 'active') === status);
     }
 
     // Filter by search query if provided
@@ -157,9 +120,9 @@ router.get('/users', adminOnly, async (req, res) => {
     const enhancedUsers = allUsers.map(user => {
       let prescriptionCount = 0;
       if (user.role === 'doctor') {
-        prescriptionCount = allPrescriptions.filter(p => p.doctorId === user.id || p.doctorId === user._id).length;
+        prescriptionCount = allPrescriptions.filter(p => p.doctorId === user.id).length;
       } else if (user.role === 'patient') {
-        prescriptionCount = allPrescriptions.filter(p => p.patientId === user.id || p.patientId === user._id).length;
+        prescriptionCount = allPrescriptions.filter(p => p.patientId === user.id).length;
       }
 
       return {
@@ -194,26 +157,7 @@ router.put('/users/:id/status', adminOnly, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status value. Must be "active" or "deactivated".' });
     }
 
-    let updatedUser = null;
-
-    if (isMongoConnected() && UserModel) {
-      try {
-        const user = await UserModel.findByIdAndUpdate(
-          id,
-          { $set: { status: status } },
-          { new: true }
-        );
-        if (user) {
-          updatedUser = user.toJSON();
-        }
-      } catch (err) {
-        console.log('[Admin API] Mongo update error, falling back:', err.message);
-      }
-    }
-
-    if (!updatedUser) {
-      updatedUser = await updateUser(id, { status });
-    }
+    const updatedUser = await updateUser(id, { status });
 
     if (!updatedUser) {
       return res.status(404).json({ success: false, message: 'User not found' });
@@ -281,23 +225,13 @@ router.post('/users', adminOnly, async (req, res) => {
  */
 router.get('/prescriptions', adminOnly, async (req, res) => {
   try {
-    let prescriptions = [];
-    let users = [];
-
-    if (isMongoConnected() && PrescriptionModel && UserModel) {
-      const rawPrescriptions = await PrescriptionModel.find({}).sort({ createdAt: -1 });
-      prescriptions = rawPrescriptions.map(p => p.toJSON());
-      const rawUsers = await UserModel.find({});
-      users = rawUsers.map(u => u.toJSON());
-    } else {
-      prescriptions = await getPrescriptions();
-      users = await getUsers();
-    }
+    const prescriptions = await getPrescriptions();
+    const users = await getUsers();
 
     // Build fast lookup map for users
     const userMap = new Map();
     users.forEach(u => {
-      userMap.set(String(u.id || u._id), u);
+      userMap.set(String(u.id), u);
     });
 
     // Enhance transactions with Doctor and Patient names & emails
@@ -306,11 +240,11 @@ router.get('/prescriptions', adminOnly, async (req, res) => {
       const pat = userMap.get(String(p.patientId)) || null;
 
       return {
-        id: p.id || p._id,
+        id: p.id,
         createdAt: p.createdAt || p.date,
         updatedAt: p.updatedAt,
         status: p.status || 'active',
-        qrCode: p.qrCode || p.id || p._id,
+        qrCode: p.qrCode || p.id,
         medication: p.medication || '',
         dosage: p.dosage || '',
         instructions: p.instructions || '',

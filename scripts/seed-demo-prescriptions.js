@@ -76,7 +76,9 @@ async function seedDemoPrescriptions() {
     // Main Doctor & Patient for prescribing
     const mainDoctor = createdDoctors[0];
     const mainPatient = createdPatients[0];
-    const docName = `Dr. ${mainDoctor.firstName || 'John'} ${mainDoctor.lastName || 'Smith'}`.trim();
+    const docName = mainDoctor.firstName.startsWith('Dr.') 
+      ? `${mainDoctor.firstName} ${mainDoctor.lastName}`.trim()
+      : `Dr. ${mainDoctor.firstName} ${mainDoctor.lastName}`.trim();
     const patName = `${mainPatient.firstName || 'Sarah'} ${mainPatient.lastName || 'Johnson'}`.trim();
 
     // Demo Prescription 1: Respiratory Infection

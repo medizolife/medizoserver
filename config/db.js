@@ -1,52 +1,48 @@
-const mongoose = require('mongoose');
-const { getMongoUri } = require('../config/mongo.config');
+const fs = require('fs');
+const path = require('path');
+const { isD1Connected, isD1Configured, execRawSQL } = require('./d1-client');
 
 let isConnected = false;
 
 /**
- * Connect to MongoDB using the configured URI.
- * Reuses existing connection in Serverless environments.
+ * Connect to Cloudflare D1 and run schema migrations.
+ * Replaces the old MongoDB connectDB() function.
+ * @returns {Promise<boolean>} Whether D1 is connected and ready
  */
 const connectDB = async () => {
-  if (isConnected || mongoose.connection.readyState === 1) {
+  if (isConnected) {
     return true;
   }
 
-  const mongoUri = getMongoUri();
-
-  if (!mongoUri) {
-    console.log('MongoDB URI not configured. Using fallback storage');
+  if (!isD1Configured()) {
+    console.log('Cloudflare D1 credentials not configured. Check CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_D1_DATABASE_ID in .env');
     return false;
   }
 
   try {
-    console.log('Attempting to connect to MongoDB...');
-    let conn;
-    try {
-      conn = await mongoose.connect(mongoUri, {
-        serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 5000,
-      });
-    } catch (firstErr) {
-      if (firstErr.message && firstErr.message.includes('querySrv')) {
-        console.log('DNS SRV lookup failed, retrying with public DNS resolvers...');
-        const dns = require('dns');
-        try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch (e) {}
-        conn = await mongoose.connect(mongoUri, {
-          serverSelectionTimeoutMS: 5000,
-          connectTimeoutMS: 5000,
-        });
-      } else {
-        throw firstErr;
-      }
+    console.log('Attempting to connect to Cloudflare D1...');
+    
+    // Test connectivity
+    const connected = await isD1Connected();
+    if (!connected) {
+      console.log('Cloudflare D1 connection failed.');
+      return false;
+    }
+
+    // Run schema migrations
+    const schemaPath = path.join(__dirname, 'schema.sql');
+    if (fs.existsSync(schemaPath)) {
+      console.log('Running D1 schema migrations...');
+      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+      await execRawSQL(schemaSql);
+      console.log('D1 schema migrations completed.');
     }
 
     isConnected = true;
-    console.log(`MongoDB connected: ${conn.connection.host}`);
+    console.log('Cloudflare D1 connected successfully.');
     return true;
   } catch (error) {
-    console.error(`MongoDB connection error: ${error.message}`);
-    console.log('Falling back to storage');
+    console.error(`D1 connection error: ${error.message}`);
     return false;
   }
 };

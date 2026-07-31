@@ -1,330 +1,349 @@
 const jwt = require('jsonwebtoken');
-const fs = require('fs');
-const path = require('path');
 const bcrypt = require('bcryptjs');
-const mongoose = require('mongoose');
+const { queryD1, isD1Connected: checkD1 } = require('../config/d1-client');
 
-// Import MongoDB model
-let UserModel;
-try {
-  UserModel = require('./UserModel');
-} catch (e) {
-  UserModel = null;
+// JSON fields that need parsing on read and stringifying on write
+const USER_JSON_FIELDS = [
+  'allergies', 'diseaseHistory', 'chronicConditions',
+  'emergencyContact', 'linkedPatients', 'digilockerProfile'
+];
+
+/**
+ * Parse JSON fields from a raw D1 row into JS objects
+ */
+function parseUserRow(row) {
+  if (!row) return null;
+  const user = { ...row };
+  // Map boolean
+  user.digilockerVerified = Boolean(user.digilockerVerified);
+  // Parse JSON fields
+  for (const field of USER_JSON_FIELDS) {
+    if (typeof user[field] === 'string') {
+      try {
+        user[field] = JSON.parse(user[field]);
+      } catch (e) {
+        // Keep as-is if not valid JSON
+      }
+    }
+  }
+  return user;
 }
 
-// Path to users data file (fallback)
-const usersFilePath = process.env.VERCEL 
-  ? path.join('/tmp', 'users.json') 
-  : path.join(__dirname, '../data/users.json');
-const dataDir = path.dirname(usersFilePath);
-
-try {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+/**
+ * Prepare user data for D1 INSERT/UPDATE — stringify JSON fields
+ */
+function serializeUserData(userData) {
+  const data = { ...userData };
+  for (const field of USER_JSON_FIELDS) {
+    if (data[field] !== undefined && typeof data[field] !== 'string') {
+      data[field] = JSON.stringify(data[field]);
+    }
   }
-  if (!fs.existsSync(usersFilePath)) {
-    fs.writeFileSync(usersFilePath, JSON.stringify([], null, 2));
+  // Convert boolean to integer for SQLite
+  if (data.digilockerVerified !== undefined) {
+    data.digilockerVerified = data.digilockerVerified ? 1 : 0;
   }
-} catch (e) {
-  console.log('File storage init notice:', e.message);
+  return data;
 }
 
-// Check if MongoDB is connected
-const isMongoConnected = () => {
-  return mongoose.connection.readyState === 1;
+/**
+ * Strip password and internal fields from a user object for return
+ */
+function sanitizeUser(user) {
+  if (!user) return null;
+  const { password, ...rest } = user;
+  return rest;
+}
+
+/**
+ * Check if D1 is connected
+ */
+const isD1ConnectedCheck = () => {
+  // Synchronous check - we assume connected after init
+  // The actual async check is done at startup
+  return true;
 };
+
+// ============================================================
+// CRUD OPERATIONS
+// ============================================================
 
 /**
  * Get all users
- * @returns {Array} Array of users
+ * @returns {Promise<Array>} Array of users
  */
 const getUsers = async () => {
-  if (isMongoConnected() && UserModel) {
-    try {
-      const users = await UserModel.find({});
-      return users.map(u => u.toJSON());
-    } catch (error) {
-      console.error('MongoDB getUsers error:', error);
-    }
-  }
-  
-  // Fallback to JSON file
   try {
-    if (!fs.existsSync(usersFilePath)) {
-      fs.writeFileSync(usersFilePath, JSON.stringify([], null, 2));
-      return [];
-    }
-    const data = fs.readFileSync(usersFilePath, 'utf8');
-    return JSON.parse(data);
+    const { results } = await queryD1('SELECT * FROM users');
+    return results.map(row => sanitizeUser(parseUserRow(row)));
   } catch (error) {
-    console.error('Error reading users file:', error);
+    console.error('D1 getUsers error:', error);
     return [];
-  }
-};
-
-// Sync version for backward compatibility
-const getUsersSync = () => {
-  try {
-    if (!fs.existsSync(usersFilePath)) {
-      fs.writeFileSync(usersFilePath, JSON.stringify([], null, 2));
-      return [];
-    }
-    const data = fs.readFileSync(usersFilePath, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error('Error reading users file:', error);
-    return [];
-  }
-};
-
-/**
- * Save users to the JSON file (fallback only)
- * @param {Array} users - Array of users to save
- */
-const saveUsers = (users) => {
-  try {
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    fs.writeFileSync(usersFilePath, JSON.stringify(users, null, 2));
-    console.log('Users saved successfully, count:', users.length);
-  } catch (error) {
-    console.error('Error writing users file:', error);
   }
 };
 
 /**
  * Find a user by email
  * @param {string} email - Email to search for
- * @returns {Object|null} User object or null if not found
+ * @returns {Promise<Object|null>} User object (WITH password) or null
  */
 const findUserByEmail = async (email) => {
   if (!email) return null;
-  
-  if (isMongoConnected() && UserModel) {
-    try {
-      const user = await UserModel.findOne({ email: email.toLowerCase() });
-      return user ? { ...user.toJSON(), password: user.password } : null;
-    } catch (error) {
-      console.error('MongoDB findUserByEmail error:', error);
-    }
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM users WHERE email = ? LIMIT 1',
+      [String(email).toLowerCase()]
+    );
+    return results.length > 0 ? parseUserRow(results[0]) : null;
+  } catch (error) {
+    console.error('D1 findUserByEmail error:', error);
+    return null;
   }
-  
-  // Fallback to JSON file
-  const users = getUsersSync();
-  const target = String(email).toLowerCase();
-  return users.find(user => String(user.email).toLowerCase() === target) || null;
 };
 
 /**
  * Find a user by ID
- * @param {string} id - User ID to search for
- * @returns {Object|null} User object or null if not found
+ * @param {string} id - User ID
+ * @returns {Promise<Object|null>} User object (without password) or null
  */
 const findUserById = async (id) => {
   if (!id) return null;
-  
-  if (isMongoConnected() && UserModel) {
-    try {
-      const user = await UserModel.findById(id);
-      return user ? user.toJSON() : null;
-    } catch (error) {
-      console.error('MongoDB findUserById error:', error);
-    }
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM users WHERE id = ? LIMIT 1',
+      [id]
+    );
+    return results.length > 0 ? sanitizeUser(parseUserRow(results[0])) : null;
+  } catch (error) {
+    console.error('D1 findUserById error:', error);
+    return null;
   }
-  
-  // Fallback to JSON file
-  const users = getUsersSync();
-  return users.find(user => user.id === id) || null;
 };
 
 /**
  * Create a new user
  * @param {Object} userData - User data
- * @returns {Object} Created user object
+ * @returns {Promise<Object>} Created user object (without password)
  */
 const createUser = async (userData) => {
-  if (isMongoConnected() && UserModel) {
-    try {
-      // Check if user already exists
-      const existingUser = await UserModel.findOne({ email: userData.email.toLowerCase() });
-      if (existingUser) {
-        throw new Error('User with this email already exists');
-      }
-      
-      const newUser = new UserModel(userData);
-      await newUser.save();
-      return newUser.toJSON();
-    } catch (error) {
-      console.error('MongoDB createUser error:', error);
-      throw error;
+  try {
+    // Check if user already exists
+    const existing = await findUserByEmail(userData.email);
+    if (existing) {
+      throw new Error('User with this email already exists');
     }
+
+    // Hash password if provided
+    let hashedPassword = null;
+    if (userData.password) {
+      const salt = await bcrypt.genSalt(10);
+      hashedPassword = await bcrypt.hash(userData.password, salt);
+    }
+
+    // Prepare data
+    const data = serializeUserData({
+      ...userData,
+      email: userData.email.toLowerCase(),
+      password: hashedPassword
+    });
+
+    // Build dynamic INSERT
+    // Filter out undefined values, keep only fields that have values
+    const allowedFields = [
+      'firstName', 'lastName', 'email', 'password', 'googleId', 'picture',
+      'authProvider', 'role', 'status', 'pharmacyName', 'pharmacyAddress',
+      'specialization', 'licenseNumber', 'clinicAddress', 'experience',
+      'qualifications', 'profileImage', 'clinicLogo', 'signature',
+      'clinicName', 'alternateEmail', 'secondaryPhone', 'fax', 'whatsapp',
+      'website', 'linkedin', 'twitter', 'facebook', 'instagram',
+      'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
+      'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
+      'medicalHistory', 'emergencyContact', 'digilockerVerified', 'digilockerProfile'
+    ];
+
+    const fields = [];
+    const placeholders = [];
+    const values = [];
+
+    for (const field of allowedFields) {
+      if (data[field] !== undefined) {
+        fields.push(field);
+        placeholders.push('?');
+        values.push(data[field]);
+      }
+    }
+
+    const sql = `INSERT INTO users (${fields.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
+    const { results } = await queryD1(sql, values);
+
+    if (results.length === 0) {
+      throw new Error('Failed to create user');
+    }
+
+    return sanitizeUser(parseUserRow(results[0]));
+  } catch (error) {
+    console.error('D1 createUser error:', error);
+    throw error;
   }
-  
-  // Fallback to JSON file
-  const users = getUsersSync();
-  
-  // Check if user already exists
-  if (users.some(user => user.email.toLowerCase() === userData.email.toLowerCase())) {
-    throw new Error('User with this email already exists');
-  }
-  
-  // Hash password
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(userData.password, salt);
-  
-  // Create new user
-  const newUser = {
-    id: Date.now().toString(),
-    ...userData,
-    password: hashedPassword,
-    createdAt: new Date().toISOString()
-  };
-  
-  // Save user
-  users.push(newUser);
-  saveUsers(users);
-  
-  // Remove password from returned object
-  const { password, ...userWithoutPassword } = newUser;
-  return userWithoutPassword;
 };
 
 /**
  * Update a user
  * @param {string} id - User ID
  * @param {Object} userData - User data to update
- * @returns {Object|null} Updated user object or null if not found
+ * @returns {Promise<Object|null>} Updated user (without password) or null
  */
 const updateUser = async (id, userData) => {
-  if (isMongoConnected() && UserModel) {
-    try {
-      // Handle password update
-      if (userData.password) {
-        const salt = await bcrypt.genSalt(10);
-        userData.password = await bcrypt.hash(userData.password, salt);
-      }
-      
-      const user = await UserModel.findByIdAndUpdate(
-        id,
-        { ...userData, updatedAt: new Date() },
-        { new: true }
-      );
-      return user ? user.toJSON() : null;
-    } catch (error) {
-      console.error('MongoDB updateUser error:', error);
+  try {
+    // Handle password update
+    if (userData.password) {
+      const salt = await bcrypt.genSalt(10);
+      userData.password = await bcrypt.hash(userData.password, salt);
     }
-  }
-  
-  // Fallback to JSON file
-  const users = getUsersSync();
-  const index = users.findIndex(user => user.id === id);
-  
-  if (index === -1) {
+
+    const data = serializeUserData(userData);
+
+    // Build dynamic UPDATE
+    const setClauses = [];
+    const values = [];
+
+    const skipFields = ['id', 'createdAt'];
+    for (const [key, value] of Object.entries(data)) {
+      if (skipFields.includes(key) || value === undefined) continue;
+      setClauses.push(`${key} = ?`);
+      values.push(value);
+    }
+
+    if (setClauses.length === 0) return await findUserById(id);
+
+    // Add updatedAt
+    setClauses.push("updatedAt = datetime('now')");
+    values.push(id); // WHERE clause
+
+    const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = ? RETURNING *`;
+    const { results } = await queryD1(sql, values);
+
+    return results.length > 0 ? sanitizeUser(parseUserRow(results[0])) : null;
+  } catch (error) {
+    console.error('D1 updateUser error:', error);
     return null;
   }
-  
-  // Handle password update
-  if (userData.password) {
-    const salt = await bcrypt.genSalt(10);
-    userData.password = await bcrypt.hash(userData.password, salt);
-  }
-  
-  // Update user
-  users[index] = {
-    ...users[index],
-    ...userData,
-    updatedAt: new Date().toISOString()
-  };
-  
-  saveUsers(users);
-  
-  // Remove password from returned object
-  const { password, ...userWithoutPassword } = users[index];
-  return userWithoutPassword;
 };
 
 /**
  * Delete a user
  * @param {string} id - User ID
- * @returns {boolean} Success status
+ * @returns {Promise<boolean>}
  */
 const deleteUser = async (id) => {
-  if (isMongoConnected() && UserModel) {
-    try {
-      const result = await UserModel.findByIdAndDelete(id);
-      return !!result;
-    } catch (error) {
-      console.error('MongoDB deleteUser error:', error);
-    }
-  }
-  
-  // Fallback to JSON file
-  const users = getUsersSync();
-  const filteredUsers = users.filter(user => user.id !== id);
-  
-  if (filteredUsers.length === users.length) {
+  try {
+    const { meta } = await queryD1('DELETE FROM users WHERE id = ?', [id]);
+    return (meta?.changes || 0) > 0;
+  } catch (error) {
+    console.error('D1 deleteUser error:', error);
     return false;
   }
-  
-  saveUsers(filteredUsers);
-  return true;
 };
 
 /**
  * Authenticate a user
- * @param {string} email - User email
- * @param {string} password - User password
- * @returns {Object} User object and JWT token
+ * @param {string} email
+ * @param {string} password
+ * @returns {Promise<{user: Object, token: string}>}
  */
 const authenticateUser = async (email, password) => {
   const user = await findUserByEmail(email);
-  
+
   if (!user) {
     throw new Error('Invalid credentials');
   }
-  
-  let isPasswordValid;
-  
-  if (isMongoConnected() && UserModel) {
-    try {
-      const mongoUser = await UserModel.findOne({ email: email.toLowerCase() });
-      if (mongoUser) {
-        isPasswordValid = await mongoUser.comparePassword(password);
-      } else {
-        isPasswordValid = await bcrypt.compare(password, user.password);
-      }
-    } catch (error) {
-      isPasswordValid = await bcrypt.compare(password, user.password);
-    }
-  } else {
-    isPasswordValid = await bcrypt.compare(password, user.password);
+
+  if (!user.password) {
+    throw new Error('Invalid credentials');
   }
-  
+
+  const isPasswordValid = await bcrypt.compare(password, user.password);
   if (!isPasswordValid) {
     throw new Error('Invalid credentials');
   }
-  
+
   // Generate JWT token
   const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
   const token = jwt.sign(
-    { id: user.id || user._id, role: user.role },
+    { id: user.id, role: user.role },
     jwtSecret,
     { expiresIn: '1d' }
   );
-  
-  // Remove password from returned object
-  const { password: userPassword, ...userWithoutPassword } = user;
-  
+
   return {
-    user: userWithoutPassword,
+    user: sanitizeUser(user),
     token
   };
 };
 
+/**
+ * Find or create a user via Google OAuth
+ * @param {Object} googleUserInfo - User info from Google
+ * @param {string} role - User role (for new users)
+ * @returns {Promise<{user: Object, token: string, isNewUser: boolean}>}
+ */
+async function findOrCreateGoogleUser(googleUserInfo, role = 'patient') {
+  const { googleId, email, firstName, lastName, picture } = googleUserInfo;
+
+  try {
+    // Check by googleId first, then email
+    let { results } = await queryD1(
+      'SELECT * FROM users WHERE googleId = ? OR email = ? LIMIT 1',
+      [googleId, email.toLowerCase()]
+    );
+
+    let user = results.length > 0 ? parseUserRow(results[0]) : null;
+    let isNewUser = false;
+
+    if (!user) {
+      // Create new user
+      user = await createUser({
+        googleId,
+        email: email.toLowerCase(),
+        firstName,
+        lastName,
+        picture,
+        role,
+        authProvider: 'google'
+      });
+      isNewUser = true;
+      console.log('Created new Google user:', email);
+    } else if (!user.googleId) {
+      // Link existing email account to Google
+      user = await updateUser(user.id, {
+        googleId,
+        picture: picture || user.picture,
+        authProvider: 'google'
+      });
+      console.log('Linked existing account to Google:', email);
+    }
+
+    // Generate JWT token
+    const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      jwtSecret,
+      { expiresIn: '1d' }
+    );
+
+    return { user: sanitizeUser(user), token, isNewUser };
+  } catch (error) {
+    console.error('D1 findOrCreateGoogleUser error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create demo users if they don't exist
+ */
 const createDemoUsers = async () => {
   try {
-    // Check and create admin user if not exists
+    // Check and create admin user
     const adminUser = await findUserByEmail('admin@medizo.life');
     if (!adminUser) {
       console.log('Seeding admin demo user (admin@medizo.life)...');
@@ -338,7 +357,7 @@ const createDemoUsers = async () => {
       });
     }
 
-    // Check and create pharmacist demo user if not exists
+    // Check and create pharmacist demo user
     const pharmUser = await findUserByEmail('pharmacist@test.com');
     if (!pharmUser) {
       console.log('Seeding pharmacist demo user (pharmacist@test.com)...');
@@ -356,7 +375,7 @@ const createDemoUsers = async () => {
       });
     }
 
-    // Check and create doctor demo user if not exists
+    // Check and create doctor demo user
     const docUser = await findUserByEmail('doctor@test.com');
     if (!docUser) {
       console.log('Seeding doctor demo user (doctor@test.com)...');
@@ -372,7 +391,7 @@ const createDemoUsers = async () => {
       });
     }
 
-    // Check and create patient demo user if not exists
+    // Check and create patient demo user
     const patUser = await findUserByEmail('patient@test.com');
     if (!patUser) {
       console.log('Seeding patient demo user (patient@test.com)...');
@@ -387,7 +406,7 @@ const createDemoUsers = async () => {
         phone: '555-0123',
         address: '123 Main St, City',
         bloodType: 'O+',
-        allergies: ['Penicillin'],
+        allergies: { environmental: [], food: [], drugs: ['Penicillin'], other: [] },
         chronicConditions: [],
         status: 'active'
       });
@@ -399,7 +418,7 @@ const createDemoUsers = async () => {
 
 module.exports = {
   getUsers,
-  getUsersSync,
+  getUsersSync: getUsers,  // Alias for backward compatibility (now always async)
   findUserByEmail,
   findUserById,
   createUser,
@@ -407,112 +426,6 @@ module.exports = {
   deleteUser,
   authenticateUser,
   createDemoUsers,
-  isMongoConnected,
+  isMongoConnected: isD1ConnectedCheck,  // Backward-compatible export name
   findOrCreateGoogleUser
 };
-
-/**
- * Find or create a user via Google OAuth
- * @param {Object} googleUserInfo - User info from Google
- * @param {string} role - User role (for new users)
- * @returns {Object} User object, JWT token, and isNewUser flag
- */
-async function findOrCreateGoogleUser(googleUserInfo, role = 'patient') {
-  const { googleId, email, firstName, lastName, picture } = googleUserInfo;
-  
-  if (isMongoConnected() && UserModel) {
-    try {
-      // First check if user exists by googleId or email
-      let user = await UserModel.findOne({ 
-        $or: [{ googleId }, { email: email.toLowerCase() }] 
-      });
-      
-      let isNewUser = false;
-      
-      if (!user) {
-        // Create new user
-        user = new UserModel({
-          googleId,
-          email: email.toLowerCase(),
-          firstName,
-          lastName,
-          picture,
-          role,
-          authProvider: 'google'
-        });
-        await user.save();
-        isNewUser = true;
-        console.log('Created new Google user:', email);
-      } else if (!user.googleId) {
-        // Link existing email account to Google
-        user.googleId = googleId;
-        user.picture = picture || user.picture;
-        user.authProvider = 'google';
-        await user.save();
-        console.log('Linked existing account to Google:', email);
-      }
-      
-      // Generate JWT token
-      const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
-      const token = jwt.sign(
-        { id: user._id, role: user.role },
-        jwtSecret,
-        { expiresIn: '1d' }
-      );
-      
-      return { user: user.toJSON(), token, isNewUser };
-    } catch (error) {
-      console.error('MongoDB findOrCreateGoogleUser error:', error);
-      throw error;
-    }
-  }
-  
-  // Fallback to JSON file
-  const users = getUsersSync();
-  let user = users.find(u => 
-    u.googleId === googleId || u.email.toLowerCase() === email.toLowerCase()
-  );
-  
-  let isNewUser = false;
-  
-  if (!user) {
-    // Create new user
-    user = {
-      id: Date.now().toString(),
-      googleId,
-      email: email.toLowerCase(),
-      firstName,
-      lastName,
-      picture,
-      role,
-      authProvider: 'google',
-      createdAt: new Date().toISOString()
-    };
-    users.push(user);
-    saveUsers(users);
-    isNewUser = true;
-    console.log('Created new Google user (JSON):', email);
-  } else if (!user.googleId) {
-    // Link existing account
-    user.googleId = googleId;
-    user.picture = picture || user.picture;
-    user.authProvider = 'google';
-    const index = users.findIndex(u => u.id === user.id);
-    users[index] = user;
-    saveUsers(users);
-    console.log('Linked existing account to Google (JSON):', email);
-  }
-  
-  // Generate JWT token
-  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
-  const token = jwt.sign(
-    { id: user.id, role: user.role },
-    jwtSecret,
-    { expiresIn: '1d' }
-  );
-  
-  // Remove password from returned object
-  const { password, ...userWithoutPassword } = user;
-  
-  return { user: userWithoutPassword, token, isNewUser };
-}

@@ -2,13 +2,13 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const mongoose = require('mongoose');
 const morgan = require('morgan');
 const path = require('path');
 const fs = require('fs');
 
 // Import database connection
 const connectDB = require('./config/db');
+const { isD1Connected } = require('./config/d1-client');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -22,25 +22,20 @@ const { createDemoUsers } = require('./models/user');
 // Initialize express app
 const app = express();
 const PORT = process.env.PORT || 5000;
-let mongoConnected = false;
+let d1Connected = false;
 let isInitialized = false;
 
-// Connect to MongoDB and create demo users
+// Connect to D1 and create demo users
 const initializeApp = async () => {
   if (isInitialized) return;
   
   try {
-    mongoConnected = await connectDB();
+    d1Connected = await connectDB();
     
-    if (mongoConnected) {
-      console.log('Using MongoDB for data storage');
+    if (d1Connected) {
+      console.log('Using Cloudflare D1 for data storage');
     } else {
-      console.log('Using JSON file storage (fallback)');
-      // In serverless environments, write to /tmp directory if needed
-      const dataDir = process.env.VERCEL ? '/tmp/data' : path.join(__dirname, 'data');
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
+      console.log('Cloudflare D1 connection failed. Check credentials in .env');
     }
     
     await createDemoUsers();
@@ -115,12 +110,13 @@ app.get('/', (req, res) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const connected = await isD1Connected();
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    storage: mongoConnected && mongoose.connection.readyState === 1 ? 'mongodb' : 'json',
-    mongoUriConfigured: Boolean(process.env.MONGO_URI || process.env.MONGODB_URI)
+    storage: connected ? 'd1' : 'disconnected',
+    d1Configured: Boolean(process.env.CLOUDFLARE_D1_DATABASE_ID)
   });
 });
 

@@ -4,12 +4,11 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
-const mongoose = require('mongoose');
 const { findUserById, updateUser, getUsers } = require('../models/user');
 const { doctor } = require('../middleware/auth');
 const Image = require('../models/ImageModel');
 
-// Ensure uploads directory exists (fallback for when MongoDB is not available)
+// Ensure uploads directory exists (fallback for when D1 is not available)
 const uploadsDir = process.env.VERCEL 
   ? '/tmp/uploads/doctors' 
   : path.join(__dirname, '../uploads/doctors');
@@ -21,12 +20,7 @@ try {
   console.log('Uploads dir notice:', e.message);
 }
 
-// Check if MongoDB is connected
-const isMongoConnected = () => {
-  return mongoose.connection.readyState === 1;
-};
-
-// Configure multer for memory storage (to process and store in MongoDB)
+// Configure multer for memory storage (to process and store in D1)
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
@@ -45,7 +39,7 @@ const upload = multer({
 });
 
 /**
- * Compress image to reduce file size for MongoDB storage
+ * Compress image to reduce file size for D1 storage
  * Target: ~100KB or less while maintaining reasonable quality
  */
 const compressImage = async (buffer, mimeType) => {
@@ -109,14 +103,14 @@ router.get('/', doctor, async (req, res) => {
 router.get('/profile', doctor, async (req, res) => {
   try {
     const doctorId = req.user.id;
-    const doctor = await findUserById(doctorId);
+    const doctorUser = await findUserById(doctorId);
     
-    if (!doctor) {
+    if (!doctorUser) {
       return res.status(404).json({ message: 'Doctor not found' });
     }
     
     // Remove password from response
-    const { password, ...doctorData } = doctor;
+    const { password, ...doctorData } = doctorUser;
     
     res.json(doctorData);
   } catch (error) {
@@ -195,35 +189,29 @@ router.put('/profile', doctor, async (req, res) => {
 
 /**
  * @route   GET /api/doctors/images/:filename
- * @desc    Serve image from MongoDB
+ * @desc    Serve image from D1 database
  * @access  Public
  */
 router.get('/images/:filename', async (req, res) => {
   try {
     const { filename } = req.params;
     
-    if (!isMongoConnected()) {
-      // Fallback to file system
-      const filePath = path.join(uploadsDir, filename);
-      if (fs.existsSync(filePath)) {
-        return res.sendFile(filePath);
-      }
-      return res.status(404).json({ message: 'Image not found' });
-    }
-    
+    // Try D1 first
     const image = await Image.findOne({ filename });
-    if (!image) {
-      // Try filesystem fallback
-      const filePath = path.join(uploadsDir, filename);
-      if (fs.existsSync(filePath)) {
-        return res.sendFile(filePath);
-      }
-      return res.status(404).json({ message: 'Image not found' });
+    if (image) {
+      res.set('Content-Type', image.mimeType);
+      res.set('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
+      res.send(image.data);
+      return;
+    }
+
+    // Fallback to file system
+    const filePath = path.join(uploadsDir, filename);
+    if (fs.existsSync(filePath)) {
+      return res.sendFile(filePath);
     }
     
-    res.set('Content-Type', image.mimeType);
-    res.set('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
-    res.send(image.data);
+    return res.status(404).json({ message: 'Image not found' });
   } catch (error) {
     console.error('Get image error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -231,8 +219,35 @@ router.get('/images/:filename', async (req, res) => {
 });
 
 /**
+ * Helper: Upload and save an image to D1
+ */
+async function saveImageToD1(doctorId, compressedBuffer, filename, originalName, mimeType, imageType, userField) {
+  // Delete old image if exists
+  const doctorUser = await findUserById(doctorId);
+  if (doctorUser && doctorUser[userField]) {
+    const oldFilename = doctorUser[userField].split('/').pop();
+    await Image.deleteByFilename(oldFilename);
+  }
+  
+  // Save to D1
+  await Image.createImage({
+    filename,
+    originalName,
+    mimeType,
+    data: compressedBuffer,
+    size: compressedBuffer.length,
+    imageType,
+    uploadedBy: doctorId
+  });
+  
+  const imageUrl = `/api/doctors/images/${filename}`;
+  await updateUser(doctorId, { [userField]: imageUrl });
+  return imageUrl;
+}
+
+/**
  * @route   POST /api/doctors/upload-profile-image
- * @desc    Upload doctor profile image (max 20MB, compressed and stored in MongoDB)
+ * @desc    Upload doctor profile image (max 20MB, compressed and stored in D1)
  * @access  Private (Doctor only)
  */
 router.post('/upload-profile-image', doctor, async (req, res) => {
@@ -263,31 +278,13 @@ router.post('/upload-profile-image', doctor, async (req, res) => {
     const isJpeg = req.file.mimetype !== 'image/png';
     const extension = isJpeg ? '.jpg' : '.png';
     const filename = 'profileImage-' + Date.now() + '-' + Math.round(Math.random() * 1E9) + extension;
+    const mimeType = isJpeg ? 'image/jpeg' : 'image/png';
     
-    if (isMongoConnected()) {
-      // Delete old image if exists
-      const doctor = await findUserById(doctorId);
-      if (doctor?.profileImage) {
-        const oldFilename = doctor.profileImage.split('/').pop();
-        await Image.deleteOne({ filename: oldFilename });
-      }
-      
-      // Save to MongoDB
-      const newImage = new Image({
-        filename,
-        originalName: req.file.originalname,
-        mimeType: isJpeg ? 'image/jpeg' : 'image/png',
-        data: compressedBuffer,
-        size: compressedBuffer.length,
-        imageType: 'profileImage',
-        uploadedBy: doctorId
-      });
-      await newImage.save();
-      
-      const imageUrl = `/api/doctors/images/${filename}`;
-      await updateUser(doctorId, { profileImage: imageUrl });
+    try {
+      const imageUrl = await saveImageToD1(doctorId, compressedBuffer, filename, req.file.originalname, mimeType, 'profileImage', 'profileImage');
       res.json({ url: imageUrl });
-    } else {
+    } catch (d1Error) {
+      console.log('D1 image save failed, falling back to filesystem:', d1Error.message);
       // Fallback: save to filesystem
       const filePath = path.join(uploadsDir, filename);
       fs.writeFileSync(filePath, compressedBuffer);
@@ -303,7 +300,7 @@ router.post('/upload-profile-image', doctor, async (req, res) => {
 
 /**
  * @route   POST /api/doctors/upload-clinic-logo
- * @desc    Upload clinic logo (max 20MB, compressed and stored in MongoDB)
+ * @desc    Upload clinic logo (max 20MB, compressed and stored in D1)
  * @access  Private (Doctor only)
  */
 router.post('/upload-clinic-logo', doctor, async (req, res) => {
@@ -333,31 +330,11 @@ router.post('/upload-clinic-logo', doctor, async (req, res) => {
     const compressedBuffer = await compressImage(req.file.buffer, 'image/png');
     const filename = 'clinicLogo-' + Date.now() + '-' + Math.round(Math.random() * 1E9) + '.png';
     
-    if (isMongoConnected()) {
-      // Delete old image if exists
-      const doctor = await findUserById(doctorId);
-      if (doctor?.clinicLogo) {
-        const oldFilename = doctor.clinicLogo.split('/').pop();
-        await Image.deleteOne({ filename: oldFilename });
-      }
-      
-      // Save to MongoDB
-      const newImage = new Image({
-        filename,
-        originalName: req.file.originalname,
-        mimeType: 'image/png',
-        data: compressedBuffer,
-        size: compressedBuffer.length,
-        imageType: 'clinicLogo',
-        uploadedBy: doctorId
-      });
-      await newImage.save();
-      
-      const imageUrl = `/api/doctors/images/${filename}`;
-      await updateUser(doctorId, { clinicLogo: imageUrl });
+    try {
+      const imageUrl = await saveImageToD1(doctorId, compressedBuffer, filename, req.file.originalname, 'image/png', 'clinicLogo', 'clinicLogo');
       res.json({ url: imageUrl });
-    } else {
-      // Fallback: save to filesystem
+    } catch (d1Error) {
+      console.log('D1 image save failed, falling back to filesystem:', d1Error.message);
       const filePath = path.join(uploadsDir, filename);
       fs.writeFileSync(filePath, compressedBuffer);
       const imageUrl = `/uploads/doctors/${filename}`;
@@ -372,7 +349,7 @@ router.post('/upload-clinic-logo', doctor, async (req, res) => {
 
 /**
  * @route   POST /api/doctors/upload-signature
- * @desc    Upload doctor signature (max 20MB, compressed, background removed, stored in MongoDB)
+ * @desc    Upload doctor signature (max 20MB, compressed, stored in D1)
  * @access  Private (Doctor only)
  */
 router.post('/upload-signature', doctor, async (req, res) => {
@@ -411,31 +388,11 @@ router.post('/upload-signature', doctor, async (req, res) => {
       processedBuffer = await compressImage(req.file.buffer, 'image/png');
     }
     
-    if (isMongoConnected()) {
-      // Delete old image if exists
-      const doctor = await findUserById(doctorId);
-      if (doctor?.signature) {
-        const oldFilename = doctor.signature.split('/').pop();
-        await Image.deleteOne({ filename: oldFilename });
-      }
-      
-      // Save to MongoDB
-      const newImage = new Image({
-        filename,
-        originalName: req.file.originalname,
-        mimeType: 'image/png',
-        data: processedBuffer,
-        size: processedBuffer.length,
-        imageType: 'signature',
-        uploadedBy: doctorId
-      });
-      await newImage.save();
-      
-      const signatureUrl = `/api/doctors/images/${filename}`;
-      await updateUser(doctorId, { signature: signatureUrl });
+    try {
+      const signatureUrl = await saveImageToD1(doctorId, processedBuffer, filename, req.file.originalname, 'image/png', 'signature', 'signature');
       res.json({ url: signatureUrl });
-    } else {
-      // Fallback: save to filesystem
+    } catch (d1Error) {
+      console.log('D1 image save failed, falling back to filesystem:', d1Error.message);
       const filePath = path.join(uploadsDir, filename);
       fs.writeFileSync(filePath, processedBuffer);
       const signatureUrl = `/uploads/doctors/${filename}`;

@@ -1,276 +1,245 @@
-const fs = require('fs');
-const path = require('path');
-const QRCode = require('qrcode');
-const mongoose = require('mongoose');
+const { queryD1 } = require('../config/d1-client');
 
-// Import MongoDB model
-let PrescriptionModel;
-try {
-  PrescriptionModel = require('./PrescriptionModel');
-} catch (e) {
-  PrescriptionModel = null;
-}
-
-// Path to prescriptions data file
-const prescriptionsFilePath = process.env.VERCEL 
-  ? path.join('/tmp', 'prescriptions.json') 
-  : path.join(__dirname, '../data/prescriptions.json');
-
-try {
-  const dataDir = path.dirname(prescriptionsFilePath);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  if (!fs.existsSync(prescriptionsFilePath)) {
-    fs.writeFileSync(prescriptionsFilePath, JSON.stringify([], null, 2));
-  }
-} catch (e) {
-  console.log('Prescription file storage init notice:', e.message);
-}
-
-// Check if MongoDB is connected
-const isMongoConnected = () => {
-  return mongoose.connection.readyState === 1;
-};
+// JSON fields that need parsing on read and stringifying on write
+const PRESCRIPTION_JSON_FIELDS = [
+  'vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
+  'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
+  'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
+  'warningSigns', 'followUpInfo', 'dispensedBy'
+];
 
 /**
- * Get all prescriptions from the JSON file
- * @returns {Array} Array of prescriptions
+ * Parse JSON fields from a raw D1 row into JS objects
+ */
+function parsePrescriptionRow(row) {
+  if (!row) return null;
+  const rx = { ...row };
+  for (const field of PRESCRIPTION_JSON_FIELDS) {
+    if (typeof rx[field] === 'string') {
+      try {
+        rx[field] = JSON.parse(rx[field]);
+      } catch (e) {
+        // Keep as-is if not valid JSON
+      }
+    }
+  }
+  return rx;
+}
+
+/**
+ * Serialize prescription data for D1 INSERT/UPDATE
+ */
+function serializePrescriptionData(data) {
+  const out = { ...data };
+  for (const field of PRESCRIPTION_JSON_FIELDS) {
+    if (out[field] !== undefined && typeof out[field] !== 'string') {
+      out[field] = JSON.stringify(out[field]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Check if D1 is connected (backward-compatible export)
+ */
+const isMongoConnected = () => true;
+
+// ============================================================
+// CRUD OPERATIONS
+// ============================================================
+
+/**
+ * Get all prescriptions
+ * @returns {Promise<Array>}
  */
 const getPrescriptions = async () => {
-  if (isMongoConnected() && PrescriptionModel) {
-    try {
-      const prescriptions = await PrescriptionModel.find({});
-      return prescriptions.map(p => p.toJSON());
-    } catch (error) {
-      console.error('MongoDB getPrescriptions error:', error);
-    }
-  }
-  
-  // Fallback to JSON file
   try {
-    if (!fs.existsSync(prescriptionsFilePath)) {
-      fs.writeFileSync(prescriptionsFilePath, JSON.stringify([], null, 2));
-      return [];
-    }
-    const data = fs.readFileSync(prescriptionsFilePath, 'utf8');
-    return JSON.parse(data);
+    const { results } = await queryD1('SELECT * FROM prescriptions ORDER BY createdAt DESC');
+    return results.map(parsePrescriptionRow);
   } catch (error) {
-    console.error('Error reading prescriptions file:', error);
-    return [];
-  }
-};
-
-// Sync version for backward compatibility
-const getPrescriptionsSync = () => {
-  try {
-    if (!fs.existsSync(prescriptionsFilePath)) {
-      fs.writeFileSync(prescriptionsFilePath, JSON.stringify([], null, 2));
-      return [];
-    }
-    const data = fs.readFileSync(prescriptionsFilePath, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error('Error reading prescriptions file:', error);
+    console.error('D1 getPrescriptions error:', error);
     return [];
   }
 };
 
 /**
- * Save prescriptions to the JSON file
- * @param {Array} prescriptions - Array of prescriptions to save
+ * Sync version alias (now async, kept for backward compat)
  */
-const savePrescriptions = (prescriptions) => {
-  try {
-    const dataDir = path.dirname(prescriptionsFilePath);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
-    }
-    fs.writeFileSync(prescriptionsFilePath, JSON.stringify(prescriptions, null, 2));
-    console.log('Prescriptions saved successfully, count:', prescriptions.length);
-  } catch (error) {
-    console.error('Error writing prescriptions file:', error);
-  }
-};
+const getPrescriptionsSync = getPrescriptions;
 
 /**
  * Find prescriptions by doctor ID
- * @param {string} doctorId - Doctor ID
- * @returns {Array} Array of prescriptions
+ * @param {string} doctorId
+ * @returns {Promise<Array>}
  */
 const findPrescriptionsByDoctorId = async (doctorId) => {
-  if (isMongoConnected() && PrescriptionModel) {
-    try {
-      const prescriptions = await PrescriptionModel.find({ doctorId });
-      return prescriptions.map(p => p.toJSON());
-    } catch (error) {
-      console.error('MongoDB findPrescriptionsByDoctorId error:', error);
-    }
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM prescriptions WHERE doctorId = ? ORDER BY createdAt DESC',
+      [doctorId]
+    );
+    return results.map(parsePrescriptionRow);
+  } catch (error) {
+    console.error('D1 findPrescriptionsByDoctorId error:', error);
+    return [];
   }
-  
-  // Fallback to JSON file
-  const prescriptions = getPrescriptionsSync();
-  return prescriptions.filter(prescription => prescription.doctorId === doctorId);
 };
 
 /**
  * Find prescriptions by patient ID
- * @param {string} patientId - Patient ID
- * @returns {Array} Array of prescriptions
+ * @param {string} patientId
+ * @returns {Promise<Array>}
  */
 const findPrescriptionsByPatientId = async (patientId) => {
-  if (isMongoConnected() && PrescriptionModel) {
-    try {
-      const prescriptions = await PrescriptionModel.find({ patientId });
-      return prescriptions.map(p => p.toJSON());
-    } catch (error) {
-      console.error('MongoDB findPrescriptionsByPatientId error:', error);
-    }
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM prescriptions WHERE patientId = ? ORDER BY createdAt DESC',
+      [patientId]
+    );
+    return results.map(parsePrescriptionRow);
+  } catch (error) {
+    console.error('D1 findPrescriptionsByPatientId error:', error);
+    return [];
   }
-  
-  // Fallback to JSON file
-  const prescriptions = getPrescriptionsSync();
-  return prescriptions.filter(prescription => prescription.patientId === patientId);
 };
 
 /**
  * Find a prescription by ID
- * @param {string} id - Prescription ID
- * @returns {Object|null} Prescription object or null if not found
+ * @param {string} id
+ * @returns {Promise<Object|null>}
  */
 const findPrescriptionById = async (id) => {
-  if (isMongoConnected() && PrescriptionModel) {
-    try {
-      const prescription = await PrescriptionModel.findById(id);
-      return prescription ? prescription.toJSON() : null;
-    } catch (error) {
-      console.error('MongoDB findPrescriptionById error:', error);
-    }
+  if (!id) return null;
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM prescriptions WHERE id = ? LIMIT 1',
+      [id]
+    );
+    return results.length > 0 ? parsePrescriptionRow(results[0]) : null;
+  } catch (error) {
+    console.error('D1 findPrescriptionById error:', error);
+    return null;
   }
-  
-  // Fallback to JSON file
-  const prescriptions = getPrescriptionsSync();
-  return prescriptions.find(prescription => prescription.id === id) || null;
 };
 
 /**
  * Create a new prescription
- * @param {Object} prescriptionData - Prescription data
- * @returns {Object} Created prescription object
+ * @param {Object} prescriptionData
+ * @returns {Promise<Object>}
  */
 const createPrescription = async (prescriptionData) => {
-  if (isMongoConnected() && PrescriptionModel) {
-    try {
-      // Let MongoDB auto-generate the _id — don't pre-set it
-      const newPrescription = new PrescriptionModel({
-        ...prescriptionData,
-        status: 'active'
-      });
-      await newPrescription.save();
+  try {
+    const data = serializePrescriptionData({
+      ...prescriptionData,
+      status: 'active'
+    });
 
-      // Set qrCode to the ACTUAL saved _id so QR scan always matches
-      newPrescription.qrCode = newPrescription._id.toString();
-      await newPrescription.save();
+    const allowedFields = [
+      'doctorId', 'doctorName', 'doctorSpecialization', 'doctorLicenseNumber',
+      'patientId', 'patientName', 'patientEmail', 'patientAge', 'patientGender',
+      'vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
+      'currentMedications', 'pastSurgicalHistory',
+      'diagnosis', 'medication', 'dosage', 'frequency', 'duration', 'instructions', 'notes',
+      'medications', 'medicationNotes',
+      'testsRequired', 'investigations', 'investigationNotes',
+      'dietModifications', 'lifestyleChanges', 'warningSigns',
+      'followUpDate', 'followUpInfo', 'emergencyHelpline',
+      'qrCode', 'status', 'dispensedStatus', 'dispensedAt', 'dispensedBy', 'dispenseNotes'
+    ];
 
-      console.log('Prescription saved to MongoDB, _id:', newPrescription._id, 'qrCode:', newPrescription.qrCode);
-      return newPrescription.toJSON();
-    } catch (error) {
-      console.error('MongoDB createPrescription error:', error);
-      throw error;
+    const fields = [];
+    const placeholders = [];
+    const values = [];
+
+    for (const field of allowedFields) {
+      if (data[field] !== undefined) {
+        fields.push(field);
+        placeholders.push('?');
+        values.push(data[field]);
+      }
     }
+
+    const sql = `INSERT INTO prescriptions (${fields.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
+    const { results } = await queryD1(sql, values);
+
+    if (results.length === 0) {
+      throw new Error('Failed to create prescription');
+    }
+
+    const newPrescription = parsePrescriptionRow(results[0]);
+
+    // Set qrCode to the generated ID so QR scan always matches
+    if (!newPrescription.qrCode || newPrescription.qrCode === '') {
+      await queryD1(
+        'UPDATE prescriptions SET qrCode = ? WHERE id = ?',
+        [newPrescription.id, newPrescription.id]
+      );
+      newPrescription.qrCode = newPrescription.id;
+    }
+
+    console.log('Prescription saved to D1, id:', newPrescription.id, 'qrCode:', newPrescription.qrCode);
+    return newPrescription;
+  } catch (error) {
+    console.error('D1 createPrescription error:', error);
+    throw error;
   }
-  
-  // Fallback to JSON file
-  const prescriptionId = Date.now().toString();
-  const prescriptions = getPrescriptionsSync();
-  
-  // Create new prescription
-  const newPrescription = {
-    id: prescriptionId,
-    ...prescriptionData,
-    qrCode: prescriptionId,  // Store only the ID for QR verification
-    status: 'active',
-    createdAt: new Date().toISOString()
-  };
-  
-  // Save prescription
-  prescriptions.push(newPrescription);
-  savePrescriptions(prescriptions);
-  
-  return newPrescription;
 };
 
 /**
  * Update a prescription
- * @param {string} id - Prescription ID
- * @param {Object} prescriptionData - Prescription data to update
- * @returns {Object|null} Updated prescription object or null if not found
+ * @param {string} id
+ * @param {Object} prescriptionData
+ * @returns {Promise<Object|null>}
  */
 const updatePrescription = async (id, prescriptionData) => {
-  if (isMongoConnected() && PrescriptionModel) {
-    try {
-      const prescription = await PrescriptionModel.findByIdAndUpdate(
-        id,
-        { ...prescriptionData, updatedAt: new Date() },
-        { new: true }
-      );
-      return prescription ? prescription.toJSON() : null;
-    } catch (error) {
-      console.error('MongoDB updatePrescription error:', error);
+  try {
+    const data = serializePrescriptionData(prescriptionData);
+
+    const setClauses = [];
+    const values = [];
+
+    const skipFields = ['id', 'createdAt'];
+    for (const [key, value] of Object.entries(data)) {
+      if (skipFields.includes(key) || value === undefined) continue;
+      setClauses.push(`${key} = ?`);
+      values.push(value);
     }
-  }
-  
-  // Fallback to JSON file
-  const prescriptions = getPrescriptionsSync();
-  const index = prescriptions.findIndex(prescription => prescription.id === id);
-  
-  if (index === -1) {
+
+    if (setClauses.length === 0) return await findPrescriptionById(id);
+
+    // Add updatedAt
+    setClauses.push("updatedAt = datetime('now')");
+    values.push(id); // WHERE clause
+
+    const sql = `UPDATE prescriptions SET ${setClauses.join(', ')} WHERE id = ? RETURNING *`;
+    const { results } = await queryD1(sql, values);
+
+    return results.length > 0 ? parsePrescriptionRow(results[0]) : null;
+  } catch (error) {
+    console.error('D1 updatePrescription error:', error);
     return null;
   }
-  
-  // Update prescription
-  prescriptions[index] = {
-    ...prescriptions[index],
-    ...prescriptionData,
-    updatedAt: new Date().toISOString()
-  };
-  
-  savePrescriptions(prescriptions);
-  
-  return prescriptions[index];
 };
 
 /**
  * Delete a prescription
- * @param {string} id - Prescription ID
- * @returns {boolean} Success status
+ * @param {string} id
+ * @returns {Promise<boolean>}
  */
 const deletePrescription = async (id) => {
-  if (isMongoConnected() && PrescriptionModel) {
-    try {
-      const result = await PrescriptionModel.findByIdAndDelete(id);
-      return !!result;
-    } catch (error) {
-      console.error('MongoDB deletePrescription error:', error);
-    }
-  }
-  
-  // Fallback to JSON file
-  const prescriptions = getPrescriptionsSync();
-  const filteredPrescriptions = prescriptions.filter(prescription => prescription.id !== id);
-  
-  if (filteredPrescriptions.length === prescriptions.length) {
+  try {
+    const { meta } = await queryD1('DELETE FROM prescriptions WHERE id = ?', [id]);
+    return (meta?.changes || 0) > 0;
+  } catch (error) {
+    console.error('D1 deletePrescription error:', error);
     return false;
   }
-  
-  savePrescriptions(filteredPrescriptions);
-  return true;
 };
 
 module.exports = {
   getPrescriptions,
   getPrescriptionsSync,
-  savePrescriptions,
+  savePrescriptions: () => {}, // No-op, kept for backward compatibility
   findPrescriptionsByDoctorId,
   findPrescriptionsByPatientId,
   findPrescriptionById,

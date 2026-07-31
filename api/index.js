@@ -2,12 +2,12 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const mongoose = require('mongoose');
 const path = require('path');
 const fs = require('fs');
 
 // Import database connection
 const connectDB = require('../config/db');
+const { isD1Connected } = require('../config/d1-client');
 
 // Import routes
 const authRoutes = require('../routes/auth');
@@ -96,31 +96,21 @@ app.use('/admin', adminRoutes);
 
 // Root & Health check
 app.get('/api/health', async (req, res) => {
-  let dbName = 'unknown';
-  let rxCount = 0;
-  try {
-    if (mongoose.connection.readyState === 1) {
-      dbName = mongoose.connection.name || 'unknown';
-      const PrescriptionModel = require('../models/PrescriptionModel');
-      if (PrescriptionModel) {
-        rxCount = await PrescriptionModel.countDocuments();
-      }
-    }
-  } catch (e) { /* ignore */ }
+  const connected = await isD1Connected();
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    storage: mongoose.connection.readyState === 1 ? 'mongodb' : 'json',
-    dbName,
-    prescriptionCount: rxCount
+    storage: connected ? 'd1' : 'disconnected',
+    dbName: 'medizolifecloud'
   });
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const connected = await isD1Connected();
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    storage: mongoose.connection.readyState === 1 ? 'mongodb' : 'json'
+    storage: connected ? 'd1' : 'disconnected'
   });
 });
 

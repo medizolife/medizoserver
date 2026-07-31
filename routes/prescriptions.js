@@ -1,25 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
+const { queryD1 } = require('../config/d1-client');
 const { 
   createPrescription, 
   findPrescriptionById, 
   findPrescriptionsByDoctorId,
   findPrescriptionsByPatientId,
   updatePrescription,
-  deletePrescription
+  deletePrescription,
+  getPrescriptions
 } = require('../models/prescription');
 const { findUserById } = require('../models/user');
 const { auth, doctor } = require('../middleware/auth');
 const { sendPrescriptionNotification } = require('../services/email');
-
-// Try to import the Mongoose UserModel for DigiLocker check
-let UserModel;
-try {
-  UserModel = require('../models/UserModel');
-} catch (e) {
-  UserModel = null;
-}
 
 /**
  * Check if a doctor is DigiLocker verified
@@ -27,17 +20,6 @@ try {
  * @returns {boolean} Whether the doctor is verified
  */
 const isDoctorVerified = async (doctorId) => {
-  // Check via Mongoose model if available
-  if (mongoose.connection.readyState === 1 && UserModel) {
-    try {
-      const user = await UserModel.findById(doctorId).select('digilockerVerified').lean();
-      return user?.digilockerVerified === true;
-    } catch (err) {
-      console.error('DigiLocker verification check error:', err);
-    }
-  }
-  
-  // Fallback: check from user.js
   const user = await findUserById(doctorId);
   return user?.digilockerVerified === true;
 };
@@ -89,14 +71,14 @@ router.get('/', auth, async (req, res) => {
       // Enhance with doctor information safely
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
         try {
-          let doctor = null;
+          let doc = null;
           if (prescription.doctorId) {
-            doctor = await findUserById(prescription.doctorId);
+            doc = await findUserById(prescription.doctorId);
           }
           return {
             ...prescription,
-            doctorName: doctor ? `Dr. ${doctor.firstName || ''} ${doctor.lastName || ''}`.trim() : 'Unknown Doctor',
-            doctorSpecialization: doctor ? doctor.specialization || 'General Physician' : 'General Physician'
+            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
+            doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician'
           };
         } catch (err) {
           console.error('Error enhancing prescription with doctor info:', err);
@@ -108,21 +90,34 @@ router.get('/', auth, async (req, res) => {
         }
       }));
     } else if (role === 'pharmacist') {
-      // Pharmacist sees ONLY prescriptions that have been scanned and dispensed by them
-      const PrescriptionModel = require('../models/PrescriptionModel');
-      if (mongoose.connection.readyState === 1 && PrescriptionModel) {
-        try {
-          const docs = await PrescriptionModel.find({
-            $or: [
-              { 'dispensedBy.pharmacistId': userId },
-              { dispensedStatus: 'dispensed' }
-            ]
-          }).sort({ updatedAt: -1 }).lean();
-          prescriptions = docs.map(d => ({ ...d, id: d._id?.toString() || d.id }));
-        } catch (err) {
-          console.log('[Prescriptions] Mongo pharmacist fetch error:', err.message);
-          prescriptions = [];
-        }
+      // Pharmacist sees prescriptions dispensed by them
+      try {
+        const { results } = await queryD1(
+          `SELECT * FROM prescriptions WHERE 
+            json_extract(dispensedBy, '$.pharmacistId') = ? 
+            OR dispensedStatus = 'dispensed' 
+           ORDER BY updatedAt DESC`,
+          [userId]
+        );
+        // Parse JSON fields
+        const { getPrescriptions: getAll } = require('../models/prescription');
+        // Use raw results and parse them
+        prescriptions = results.map(row => {
+          const rx = { ...row };
+          const jsonFields = ['vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
+            'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
+            'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
+            'warningSigns', 'followUpInfo', 'dispensedBy'];
+          for (const field of jsonFields) {
+            if (typeof rx[field] === 'string') {
+              try { rx[field] = JSON.parse(rx[field]); } catch (e) {}
+            }
+          }
+          return rx;
+        });
+      } catch (err) {
+        console.log('[Prescriptions] D1 pharmacist fetch error:', err.message);
+        prescriptions = [];
       }
       console.log('Found', prescriptions.length, 'dispensed prescriptions for pharmacist:', userId);
 
@@ -146,16 +141,7 @@ router.get('/', auth, async (req, res) => {
       }));
     } else if (role === 'admin') {
       // Admins can see ALL prescriptions
-      const PrescriptionModel = require('../models/PrescriptionModel');
-      if (mongoose.connection.readyState === 1 && PrescriptionModel) {
-        try {
-          const docs = await PrescriptionModel.find({}).sort({ createdAt: -1 }).lean();
-          prescriptions = docs.map(d => ({ ...d, id: d._id?.toString() || d.id }));
-        } catch (err) {
-          console.log('[Prescriptions] Mongo admin fetch error:', err.message);
-          prescriptions = [];
-        }
-      }
+      prescriptions = await getPrescriptions();
       // Enhance with patient & doctor info
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
         try {
@@ -196,54 +182,61 @@ router.get('/lookup/:code', auth, async (req, res) => {
     const code = req.params.code;
     console.log('[Prescriptions] Lookup by code/id:', code);
     
-    const PrescriptionModel = require('../models/PrescriptionModel');
     let prescription = null;
 
-    const dbState = mongoose.connection.readyState;
-    const dbName = mongoose.connection.name || 'unknown';
-    console.log('[Prescriptions] Lookup - DB state:', dbState, 'DB name:', dbName, 'PrescriptionModel:', !!PrescriptionModel);
-
-    if (dbState === 1 && PrescriptionModel) {
-      // Log total count for debugging
+    // Try exact ID match first
+    prescription = await findPrescriptionById(code);
+    
+    // Try QR code match
+    if (!prescription) {
       try {
-        const totalCount = await PrescriptionModel.countDocuments();
-        console.log('[Prescriptions] Total documents in collection:', totalCount);
-      } catch (countErr) {
-        console.log('[Prescriptions] Count error:', countErr.message);
-      }
-
-      // Try exact _id match first
-      try {
-        if (mongoose.Types.ObjectId.isValid(code)) {
-          prescription = await PrescriptionModel.findById(code).lean();
-          console.log('[Prescriptions] findById result:', prescription ? 'FOUND' : 'NOT FOUND');
+        const { results } = await queryD1(
+          'SELECT * FROM prescriptions WHERE qrCode = ? LIMIT 1',
+          [code]
+        );
+        if (results.length > 0) {
+          // Parse JSON fields
+          const row = results[0];
+          const jsonFields = ['vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
+            'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
+            'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
+            'warningSigns', 'followUpInfo', 'dispensedBy'];
+          for (const field of jsonFields) {
+            if (typeof row[field] === 'string') {
+              try { row[field] = JSON.parse(row[field]); } catch (e) {}
+            }
+          }
+          prescription = row;
         }
       } catch (e) {
-        console.log('[Prescriptions] findById error:', e.message);
+        console.log('[Prescriptions] QR code lookup error:', e.message);
       }
-      
-      // Try QR code string match
-      if (!prescription) {
-        prescription = await PrescriptionModel.findOne({ qrCode: code }).lean();
-        console.log('[Prescriptions] findOne qrCode result:', prescription ? 'FOUND' : 'NOT FOUND');
-      }
-      
-      // Try partial ID match (last N chars)
-      if (!prescription) {
-        const docs = await PrescriptionModel.find({}).lean();
-        console.log('[Prescriptions] Total docs for partial match:', docs.length);
-        prescription = docs.find(d => {
-          const id = (d._id?.toString() || '');
+    }
+    
+    // Try partial ID match (last N chars)
+    if (!prescription) {
+      try {
+        const { results } = await queryD1('SELECT * FROM prescriptions');
+        const jsonFields = ['vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
+          'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
+          'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
+          'warningSigns', 'followUpInfo', 'dispensedBy'];
+        prescription = results.find(d => {
+          const id = d.id || '';
           return id.endsWith(code) || id.includes(code);
         });
+        if (prescription) {
+          for (const field of jsonFields) {
+            if (typeof prescription[field] === 'string') {
+              try { prescription[field] = JSON.parse(prescription[field]); } catch (e) {}
+            }
+          }
+        }
+      } catch (e) {
+        console.log('[Prescriptions] Partial match error:', e.message);
       }
     }
 
-    if (!prescription) {
-      // Fallback to in-memory
-      prescription = await findPrescriptionById(code);
-    }
-    
     if (!prescription) {
       return res.status(404).json({ success: false, message: 'Prescription not found for this QR code or ID' });
     }
@@ -258,7 +251,7 @@ router.get('/lookup/:code', auth, async (req, res) => {
 
     const enhanced = {
       ...prescription,
-      id: prescription._id?.toString() || prescription.id,
+      id: prescription.id,
       patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : 'Unknown Patient',
       patientEmail: patient ? patient.email || 'N/A' : 'N/A',
       doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
@@ -587,7 +580,7 @@ router.delete('/:id', doctor, async (req, res) => {
   try {
     const prescriptionId = req.params.id;
     const doctorId = req.user.id;
-    const prescription = findPrescriptionById(prescriptionId);
+    const prescription = await findPrescriptionById(prescriptionId);
     
     if (!prescription) {
       return res.status(404).json({ message: 'Prescription not found' });
@@ -599,7 +592,7 @@ router.delete('/:id', doctor, async (req, res) => {
     }
     
     // Delete prescription
-    const success = deletePrescription(prescriptionId);
+    const success = await deletePrescription(prescriptionId);
     
     if (!success) {
       return res.status(500).json({ message: 'Failed to delete prescription' });
@@ -620,7 +613,7 @@ router.delete('/:id', doctor, async (req, res) => {
 router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
   try {
     const prescriptionId = req.params.id;
-    const userId = (req.user.id || req.user._id)?.toString();
+    const userId = req.user.id?.toString();
     const role = req.user.role;
     
     const prescription = await findPrescriptionById(prescriptionId);
@@ -631,13 +624,9 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
       return res.status(404).json({ message: 'Prescription not found' });
     }
     
-    // Check access permissions - convert to strings safely whether string or object
-    const prescPatientId = (typeof prescription.patientId === 'object' && prescription.patientId?._id)
-      ? prescription.patientId._id.toString()
-      : prescription.patientId?.toString();
-    const prescDoctorId = (typeof prescription.doctorId === 'object' && prescription.doctorId?._id)
-      ? prescription.doctorId._id.toString()
-      : prescription.doctorId?.toString();
+    // Check access permissions
+    const prescPatientId = prescription.patientId?.toString();
+    const prescDoctorId = prescription.doctorId?.toString();
     const currentUserId = userId?.toString();
 
     console.log('Download access check:', { currentUserId, role, prescPatientId, prescDoctorId });
@@ -653,33 +642,33 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
     
     // Get patient and doctor details (with robust fallbacks if user lookup fails)
     let patient = await findUserById(prescription.patientId);
-    let doctor = await findUserById(prescription.doctorId);
+    let doctorUser = await findUserById(prescription.doctorId);
     
     if (!patient) {
       patient = {
         id: prescPatientId || 'patient-id',
-        firstName: prescription.patientName ? prescription.patientName.split(' ')[0] : (prescription.patientFirstName || 'Patient'),
-        lastName: prescription.patientName ? prescription.patientName.split(' ').slice(1).join(' ') : (prescription.patientLastName || ''),
+        firstName: prescription.patientName ? prescription.patientName.split(' ')[0] : 'Patient',
+        lastName: prescription.patientName ? prescription.patientName.split(' ').slice(1).join(' ') : '',
         email: prescription.patientEmail || '',
-        dateOfBirth: prescription.patientDOB || prescription.patientDateOfBirth || '',
+        dateOfBirth: prescription.patientDOB || '',
         gender: prescription.patientGender || '',
         phone: prescription.patientPhone || prescription.contactNumber || ''
       };
     }
     
-    if (!doctor) {
-      doctor = {
+    if (!doctorUser) {
+      doctorUser = {
         id: prescDoctorId || 'doctor-id',
-        firstName: prescription.doctorName ? prescription.doctorName.split(' ')[0] : (prescription.doctorFirstName || 'Doctor'),
-        lastName: prescription.doctorName ? prescription.doctorName.split(' ').slice(1).join(' ') : (prescription.doctorLastName || ''),
-        specialization: prescription.doctorSpecialization || prescription.specialization || 'General Practitioner',
-        licenseNumber: prescription.doctorLicenseNumber || prescription.licenseNumber || ''
+        firstName: prescription.doctorName ? prescription.doctorName.split(' ')[0] : 'Doctor',
+        lastName: prescription.doctorName ? prescription.doctorName.split(' ').slice(1).join(' ') : '',
+        specialization: prescription.doctorSpecialization || 'General Practitioner',
+        licenseNumber: prescription.doctorLicenseNumber || ''
       };
     }
     
     // Generate PDF using the comprehensive prescription PDF generator
     const { generatePrescriptionPDF } = require('../services/pdfGenerator');
-    await generatePrescriptionPDF(res, prescriptionId, prescription, patient, doctor);
+    await generatePrescriptionPDF(res, prescriptionId, prescription, patient, doctorUser);
 
   } catch (error) {
     console.error('Download prescription error:', error);
@@ -701,40 +690,40 @@ router.put('/:id/dispense', auth, async (req, res) => {
 
     console.log('[Prescriptions] Dispense request for ID/Code:', id, 'User:', req.user?.id);
 
-    const PrescriptionModel = require('../models/PrescriptionModel');
     let prescription = null;
 
-    if (mongoose.connection.readyState === 1 && PrescriptionModel) {
+    // Try exact ID match
+    prescription = await findPrescriptionById(id);
+
+    // Try QR code match
+    if (!prescription) {
       try {
-        if (mongoose.Types.ObjectId.isValid(id)) {
-          prescription = await PrescriptionModel.findById(id).lean();
+        const { results } = await queryD1(
+          'SELECT * FROM prescriptions WHERE qrCode = ? LIMIT 1',
+          [id]
+        );
+        if (results.length > 0) {
+          prescription = results[0];
         }
       } catch (e) {}
-
-      if (!prescription) {
-        prescription = await PrescriptionModel.findOne({ qrCode: id }).lean();
-      }
-
-      if (!prescription) {
-        try {
-          const docs = await PrescriptionModel.find({}).lean();
-          prescription = docs.find(d => {
-            const docId = (d._id?.toString() || '');
-            return docId.endsWith(id) || docId.includes(id);
-          });
-        } catch (e) {}
-      }
     }
 
+    // Try partial ID match
     if (!prescription) {
-      prescription = await findPrescriptionById(id);
+      try {
+        const { results } = await queryD1('SELECT * FROM prescriptions');
+        prescription = results.find(d => {
+          const docId = d.id || '';
+          return docId.endsWith(id) || docId.includes(id);
+        });
+      } catch (e) {}
     }
 
     if (!prescription) {
       return res.status(404).json({ success: false, message: 'Prescription not found' });
     }
 
-    const targetId = prescription._id?.toString() || prescription.id || id;
+    const targetId = prescription.id || id;
 
     let pharmacist = null;
     try {
@@ -755,25 +744,10 @@ router.put('/:id/dispense', auth, async (req, res) => {
       dispenseNotes: dispenseNotes || 'All prescribed items verified and dispensed.'
     };
 
-    let updatedPrescription = null;
-
-    if (mongoose.connection.readyState === 1 && PrescriptionModel) {
-      try {
-        const doc = await PrescriptionModel.findByIdAndUpdate(
-          targetId,
-          { $set: dispenseData },
-          { new: true }
-        );
-        if (doc) {
-          updatedPrescription = doc.toJSON ? doc.toJSON() : doc;
-        }
-      } catch (err) {
-        console.log('[Prescriptions] Mongo dispense error:', err.message);
-      }
-    }
+    const updatedPrescription = await updatePrescription(targetId, dispenseData);
 
     if (!updatedPrescription) {
-      updatedPrescription = await updatePrescription(targetId, dispenseData);
+      return res.status(500).json({ success: false, message: 'Failed to update prescription' });
     }
 
     console.log('✅ Prescription successfully dispensed:', targetId);

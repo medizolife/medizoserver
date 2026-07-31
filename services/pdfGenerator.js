@@ -10,9 +10,9 @@ const fs = require('fs');
 const Image = require('../models/ImageModel');
 
 /**
- * Load an image buffer from MongoDB by its API URL path.
+ * Load an image buffer from D1 by its API URL path.
  * e.g. "/api/doctors/images/clinicLogo-123.png" → looks up filename "clinicLogo-123.png"
- * Falls back to local file if MongoDB lookup fails.
+ * Falls back to local file if D1 lookup fails.
  */
 async function loadImageBuffer(urlPath) {
   if (!urlPath) return null;
@@ -23,7 +23,7 @@ async function loadImageBuffer(urlPath) {
     const imgDoc = await Image.findOne({ filename });
     if (imgDoc && imgDoc.data) return imgDoc.data;
   } catch (e) {
-    console.error('MongoDB image lookup error:', e.message);
+    console.error('D1 image lookup error:', e.message);
   }
   // Fallback: try local file
   const localPath = path.join(__dirname, '..', urlPath.replace(/^\//, ''));
