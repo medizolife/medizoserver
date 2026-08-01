@@ -199,15 +199,22 @@ router.get('/patients/my-patients', doctor, async (req, res) => {
     // Get all prescriptions for this doctor
     const prescriptions = await findPrescriptionsByDoctorId(doctorId);
     
-    // Get unique patient IDs from prescriptions
-    const prescriptionPatientIds = prescriptions.map(p => p.patientId?.toString() || p.patientId);
+    // Get unique patient IDs from prescriptions with their latest prescription date
+    const patientLastActivity = new Map();
+    for (const p of prescriptions) {
+      const pid = p.patientId?.toString() || p.patientId;
+      const pDate = new Date(p.updatedAt || p.createdAt || 0);
+      if (!patientLastActivity.has(pid) || pDate > patientLastActivity.get(pid)) {
+        patientLastActivity.set(pid, pDate);
+      }
+    }
     
     // Get doctor's linked patients
     const doctorData = await findUserById(doctorId);
     const linkedPatientIds = doctorData?.linkedPatients || [];
     
     // Combine and deduplicate patient IDs
-    const allPatientIds = [...new Set([...prescriptionPatientIds, ...linkedPatientIds])];
+    const allPatientIds = [...new Set([...patientLastActivity.keys(), ...linkedPatientIds])];
     
     // Get patient details for each unique patient ID
     const patients = [];
@@ -215,11 +222,17 @@ router.get('/patients/my-patients', doctor, async (req, res) => {
       const patient = await findUserById(patientId);
       if (patient && patient.role === 'patient') {
         const { password, ...patientData } = patient;
-        patients.push(patientData);
+        // Use latest prescription date, or updatedAt, or createdAt as lastActivity
+        const lastPrescriptionDate = patientLastActivity.get(patientId);
+        const lastActivity = lastPrescriptionDate || new Date(patient.updatedAt || patient.createdAt || 0);
+        patients.push({ ...patientData, lastActivity: lastActivity.toISOString() });
       }
     }
 
-    console.log('Doctor\'s patients:', patients.length);
+    // Sort by latest activity first
+    patients.sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
+
+    console.log('Doctor\'s patients (sorted by activity):', patients.length);
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json({
       message: 'My patients retrieved successfully',
