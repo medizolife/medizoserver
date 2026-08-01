@@ -390,11 +390,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   // ─── Rx — PRESCRIBED MEDICATIONS ───────────────────────────────
   if (meds.length > 0) {
     const col = {
-      num:   { x: M + 1, w: 28 },
-      name:  { x: M + 29, w: 160 },
-      dos:   { x: M + 189, w: 100 },
-      dur:   { x: M + 289, w: 60 },
-      instr: { x: M + 349, w: CW - 351 },
+      num:   { x: M + 1, w: 25 },
+      name:  { x: M + 26, w: 145 },
+      dos:   { x: M + 171, w: 90 },
+      dur:   { x: M + 261, w: 85 },
+      instr: { x: M + 346, w: CW - 348 },
     };
 
     // Pre-calculate total height for all medications to keep them together
@@ -411,7 +411,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const nameStr = med.name + (med.type ? `\n(${med.type})` : '');
       doc.font('Helvetica-Bold').fontSize(9);
       const nameH = doc.heightOfString(nameStr, { width: col.name.w - 8 });
-      const rowH = Math.max(22, instrH + 8, nameH + 8);
+      const rowH = Math.max(26, instrH + 8, nameH + 8);
       medsTotalH += rowH;
     });
     // Add space for medication notes if present
@@ -435,8 +435,8 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text);
     doc.text('No.', col.num.x + 3, y + 4, { width: col.num.w, align: 'center' });
     doc.text('Medicine Name', col.name.x + 4, y + 4);
-    doc.text('Dosage', col.dos.x + 4, y + 4);
-    doc.text('Duration', col.dur.x + 4, y + 4);
+    doc.text('Dosage', col.dos.x + 4, y + 4, { align: 'center' });
+    doc.text('Duration / Qty', col.dur.x + 4, y + 4, { align: 'center' });
     doc.text('Instructions', col.instr.x + 4, y + 4);
 
     // header borders
@@ -463,7 +463,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const nameStr = med.name + (med.type ? `\n(${med.type})` : '');
       doc.font('Helvetica-Bold').fontSize(9);
       const nameH = doc.heightOfString(nameStr, { width: col.name.w - 8 });
-      const rowH = Math.max(22, instrH + 8, nameH + 8);
+      const rowH = Math.max(26, instrH + 8, nameH + 8);
 
       const rowY = y;
 
@@ -496,7 +496,10 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         if (med.durationDays) p.push(`${med.durationDays}d`);
         durStr = p.join(' ');
       }
-      doc.font('Helvetica').fontSize(9).fillColor(C.text)
+      if (med.quantity) {
+        durStr = durStr ? `${durStr}\n[Qty: ${med.quantity}]` : `Qty: ${med.quantity}`;
+      }
+      doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
         .text(durStr || '-', col.dur.x + 4, rowY + 4, { width: col.dur.w - 8, align: 'center' });
 
       // Build combined instructions from timing, meal relation, frequency, and instructions fields
