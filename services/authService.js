@@ -80,8 +80,8 @@ const registerUser = async (userData) => {
     }
     
     // Validate role
-    if (role !== 'doctor' && role !== 'patient') {
-      throw new Error('Role must be either doctor or patient');
+    if (role !== 'doctor' && role !== 'patient' && role !== 'pharmacist') {
+      throw new Error('Role must be doctor, patient, or pharmacist');
     }
     
     // Check if user already exists
@@ -142,8 +142,8 @@ const validateRegistrationData = (userData) => {
     errors.push('Password must be at least 6 characters long');
   }
   
-  if (userData.role && !['doctor', 'patient'].includes(userData.role)) {
-    errors.push('Role must be either doctor or patient');
+  if (userData.role && !['doctor', 'patient', 'pharmacist'].includes(userData.role)) {
+    errors.push('Role must be doctor, patient, or pharmacist');
   }
   
   return {
