@@ -11,6 +11,65 @@ const ALLOWED_CLIENT_IDS = [
 const googleClient = new OAuth2Client();
 
 /**
+ * Validate registration data
+ * @param {Object} userData - Registration form data
+ * @returns {Object} { isValid: boolean, errors: string[] }
+ */
+const validateRegistrationData = (userData) => {
+  const errors = [];
+
+  if (!userData.firstName || !userData.firstName.trim()) {
+    errors.push('First name is required');
+  }
+  if (!userData.lastName || !userData.lastName.trim()) {
+    errors.push('Last name is required');
+  }
+  if (!userData.email || !userData.email.trim()) {
+    errors.push('Email is required');
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userData.email)) {
+    errors.push('Invalid email format');
+  }
+  if (!userData.password || userData.password.length < 6) {
+    errors.push('Password must be at least 6 characters');
+  }
+  if (!userData.role || !['doctor', 'patient', 'pharmacist', 'admin'].includes(userData.role)) {
+    errors.push('Valid role is required (doctor, patient, pharmacist, or admin)');
+  }
+
+  return { isValid: errors.length === 0, errors };
+};
+
+/**
+ * Register a new user
+ * @param {Object} userData - User registration data
+ * @returns {Promise<{user: Object, token: string}>}
+ */
+const registerUser = async (userData) => {
+  const user = await createUser(userData);
+
+  // Generate JWT token
+  const jwt = require('jsonwebtoken');
+  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+  const token = jwt.sign(
+    { id: user.id, role: user.role },
+    jwtSecret,
+    { expiresIn: '1d' }
+  );
+
+  return { user, token };
+};
+
+/**
+ * Login user with email and password
+ * @param {string} email
+ * @param {string} password
+ * @returns {Promise<{user: Object, token: string}>}
+ */
+const loginUser = async (email, password) => {
+  return await authenticateUser(email, password);
+};
+
+/**
  * Verify Google ID token and extract user info
  * @param {string} credential Google ID token
  * @returns {Object} Google user info
@@ -57,5 +116,8 @@ const googleLogin = async (credential, role = 'patient') => {
 
 module.exports = {
   verifyGoogleToken,
-  googleLogin
+  googleLogin,
+  loginUser,
+  registerUser,
+  validateRegistrationData
 };
