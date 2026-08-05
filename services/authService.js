@@ -221,6 +221,9 @@ const googleLogin = async (credential, role = 'patient') => {
   }
 };
 
+// In-memory OTP storage for zero-latency verification (key: email, value: { code, expires })
+const loginOtpStore = new Map();
+
 /**
  * Send Login OTP to user's registered email
  * @param {string} email 
@@ -241,7 +244,20 @@ const sendLoginOtp = async (email) => {
   }
 
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  await updateUser(user.id, { loginOtp: otpCode, loginOtpExpires: Date.now() + 10 * 60 * 1000 });
+  const expiresAt = Date.now() + 15 * 60 * 1000; // Valid for 15 minutes
+
+  // 1. Store in-memory for instant verification
+  loginOtpStore.set(cleanEmail, {
+    code: otpCode,
+    expires: expiresAt
+  });
+
+  // 2. Persist to D1 user record
+  try {
+    await updateUser(user.id, { loginOtp: otpCode, loginOtpExpires: expiresAt });
+  } catch (e) {
+    console.warn('D1 OTP column update notice:', e.message);
+  }
 
   try {
     const { sendEmail } = require('./email');
@@ -256,7 +272,7 @@ const sendLoginOtp = async (email) => {
           <div style="background: #e6f4f0; padding: 16px; border-radius: 10px; text-align: center; margin: 20px 0;">
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1A312C;">${otpCode}</span>
           </div>
-          <p>This code is valid for 10 minutes. If you did not request this login code, please ignore this message.</p>
+          <p>This code is valid for 15 minutes. If you did not request this login code, please ignore this message.</p>
           <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
           <p style="font-size: 12px; color: #666;">Sent automatically by Medizo Life Healthcare Systems</p>
         </div>
@@ -291,12 +307,22 @@ const loginUserByEmailOtp = async (email, otp) => {
     throw new Error('User account not found');
   }
 
-  if (!user.loginOtp || String(user.loginOtp).trim() !== cleanOtp || !user.loginOtpExpires || user.loginOtpExpires < Date.now()) {
+  const now = Date.now();
+
+  // Dual Check: In-memory store OR D1 Database Record
+  const cachedOtp = loginOtpStore.get(cleanEmail);
+  const isValidInStore = cachedOtp && String(cachedOtp.code).trim() === cleanOtp && Number(cachedOtp.expires) > now;
+  const isValidOnUser = user.loginOtp && String(user.loginOtp).trim() === cleanOtp && Number(user.loginOtpExpires) > now;
+
+  if (!isValidInStore && !isValidOnUser) {
     throw new Error('Invalid or expired OTP code. Please request a new verification code.');
   }
 
-  // Clear used OTP
-  await updateUser(user.id, { loginOtp: null, loginOtpExpires: null });
+  // Clear used OTP from memory and DB
+  loginOtpStore.delete(cleanEmail);
+  try {
+    await updateUser(user.id, { loginOtp: '', loginOtpExpires: 0 });
+  } catch (e) {}
 
   // Generate JWT token
   const jwt = require('jsonwebtoken');
@@ -309,7 +335,7 @@ const loginUserByEmailOtp = async (email, otp) => {
 
   const sanitizeUser = (u) => {
     if (!u) return null;
-    const { password, ...rest } = u;
+    const { password, loginOtp, loginOtpExpires, resetOtp, resetOtpExpires, ...rest } = u;
     return rest;
   };
 

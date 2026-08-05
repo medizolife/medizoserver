@@ -203,7 +203,8 @@ const createUser = async (userData) => {
       'website', 'linkedin', 'twitter', 'facebook', 'instagram',
       'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
       'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
-      'medicalHistory', 'emergencyContact', 'digilockerVerified', 'digilockerProfile'
+      'medicalHistory', 'emergencyContact', 'digilockerVerified', 'digilockerProfile',
+      'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires'
     ];
 
     const fields = [];

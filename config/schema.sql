@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS users (
   digilockerVerified INTEGER DEFAULT 0,  -- boolean: 0=false, 1=true
   digilockerProfile TEXT DEFAULT '{"verified":false,"name":"","dob":"","gender":"","email":"","mobile":"","maskedAadhaar":"","digilockerid":"","referenceKey":"","eaadhaar":"","panNumber":"","drivingLicence":""}',
 
+  -- OTP verification fields
+  loginOtp TEXT DEFAULT '',
+  loginOtpExpires INTEGER DEFAULT 0,
+  resetOtp TEXT DEFAULT '',
+  resetOtpExpires INTEGER DEFAULT 0,
+
   -- Timestamps
   createdAt TEXT DEFAULT (datetime('now')),
   updatedAt TEXT DEFAULT (datetime('now'))

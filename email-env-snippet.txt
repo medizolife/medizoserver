@@ -1,0 +1,7 @@
+# Email Configuration (GoDaddy SMTP)
+EMAIL_HOST=smtpout.secureserver.net
+EMAIL_PORT=465
+EMAIL_SECURE=true
+EMAIL_USER=info@medizo.life
+EMAIL_PASS=Medizo@2026
+EMAIL_FROM=Medizo Life <info@medizo.life>

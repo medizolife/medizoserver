@@ -35,6 +35,22 @@ const connectDB = async () => {
       console.log('Running D1 schema migrations...');
       const schemaSql = fs.readFileSync(schemaPath, 'utf8');
       await execRawSQL(schemaSql);
+      
+      // Ensure OTP columns exist on existing D1 databases
+      const alterCols = [
+        'ALTER TABLE users ADD COLUMN loginOtp TEXT DEFAULT "";',
+        'ALTER TABLE users ADD COLUMN loginOtpExpires INTEGER DEFAULT 0;',
+        'ALTER TABLE users ADD COLUMN resetOtp TEXT DEFAULT "";',
+        'ALTER TABLE users ADD COLUMN resetOtpExpires INTEGER DEFAULT 0;'
+      ];
+      for (const colSql of alterCols) {
+        try {
+          await execRawSQL(colSql);
+        } catch (e) {
+          // Column already exists, safe to ignore
+        }
+      }
+
       console.log('D1 schema migrations completed.');
     }
 
