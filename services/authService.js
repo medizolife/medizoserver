@@ -263,7 +263,8 @@ const sendLoginOtp = async (email) => {
       `
     });
   } catch (emailErr) {
-    console.warn('Failed to send login OTP email:', emailErr.message);
+    console.error('Failed to send login OTP email:', emailErr);
+    throw new Error(`Email delivery failed: ${emailErr.message || 'SMTP service error'}`);
   }
 
   return {

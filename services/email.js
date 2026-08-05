@@ -5,19 +5,21 @@ const nodemailer = require('nodemailer');
  * @returns {Object} Nodemailer transport
  */
 const createTransport = () => {
-  // Check if email credentials are configured
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || 
-      process.env.EMAIL_USER === 'your-email@gmail.com' || 
-      process.env.EMAIL_PASS === 'your-email-password') {
-    throw new Error('Email credentials not configured. Please set EMAIL_USER and EMAIL_PASS in .env file.');
+  const emailUser = process.env.EMAIL_USER || 'info@medizo.life';
+  const emailPass = process.env.EMAIL_PASS || 'Medizo@2026';
+  
+  if (!emailUser || !emailPass || 
+      emailUser === 'your-email@gmail.com' || 
+      emailPass === 'your-email-password') {
+    throw new Error('Email credentials not configured. Please set EMAIL_USER and EMAIL_PASS environment variables.');
   }
   
   if (process.env.EMAIL_SERVICE) {
     return nodemailer.createTransport({
       service: process.env.EMAIL_SERVICE,
       auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+        user: emailUser,
+        pass: emailPass
       }
     });
   }
@@ -31,8 +33,8 @@ const createTransport = () => {
     port,
     secure,
     auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
+      user: emailUser,
+      pass: emailPass
     }
   });
 };
