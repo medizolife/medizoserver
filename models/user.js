@@ -102,6 +102,37 @@ const findUserByEmail = async (email) => {
 };
 
 /**
+ * Find a user by mobile/phone number
+ * @param {string} mobileNumber
+ * @returns {Promise<Object|null>}
+ */
+const findUserByMobile = async (mobileNumber) => {
+  if (!mobileNumber) return null;
+  const cleanMobile = String(mobileNumber).trim().replace(/[\s\-\(\)\+]/g, '');
+  if (!cleanMobile) return null;
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM users WHERE phone = ? OR contactNumber = ? OR secondaryPhone = ? LIMIT 1',
+      [cleanMobile, cleanMobile, cleanMobile]
+    );
+    if (results.length > 0) return parseUserRow(results[0]);
+
+    // Fallback: search all users for matching cleaned phone
+    const { results: allUsers } = await queryD1('SELECT * FROM users');
+    const matched = allUsers.find(u => {
+      const p1 = (u.phone || '').replace(/[\s\-\(\)\+]/g, '');
+      const p2 = (u.contactNumber || '').replace(/[\s\-\(\)\+]/g, '');
+      const p3 = (u.secondaryPhone || '').replace(/[\s\-\(\)\+]/g, '');
+      return p1 === cleanMobile || p2 === cleanMobile || p3 === cleanMobile;
+    });
+    return matched ? parseUserRow(matched) : null;
+  } catch (error) {
+    console.error('D1 findUserByMobile error:', error);
+    return null;
+  }
+};
+
+/**
  * Find a user by ID
  * @param {string} id - User ID
  * @returns {Promise<Object|null>} User object (without password) or null
@@ -127,11 +158,25 @@ const findUserById = async (id) => {
  */
 const createUser = async (userData) => {
   try {
-    // Check if user already exists
-    const existing = await findUserByEmail(userData.email);
-    if (existing) {
-      throw new Error('User with this email already exists');
+    const mobile = userData.phone || userData.contactNumber || userData.mobileNumber;
+    
+    // Check email uniqueness if email provided
+    if (userData.email && userData.email.trim()) {
+      const existing = await findUserByEmail(userData.email);
+      if (existing) {
+        throw new Error('User with this email already exists');
+      }
+    } else if (mobile) {
+      const existingMobile = await findUserByMobile(mobile);
+      if (existingMobile) {
+        throw new Error('User with this mobile number already exists');
+      }
     }
+
+    // Generate fallback email if email omitted (due to D1 NOT NULL schema constraint)
+    const userEmail = (userData.email && userData.email.trim()) 
+      ? userData.email.toLowerCase() 
+      : `patient_${(mobile || Date.now()).toString().replace(/[\s\-\(\)\+]/g, '')}@patient.medizo.life`;
 
     // Hash password if provided
     let hashedPassword = null;
@@ -143,12 +188,12 @@ const createUser = async (userData) => {
     // Prepare data
     const data = serializeUserData({
       ...userData,
-      email: userData.email.toLowerCase(),
+      email: userEmail,
+      phone: mobile || userData.phone || '',
       password: hashedPassword
     });
 
     // Build dynamic INSERT
-    // Filter out undefined values, keep only fields that have values
     const allowedFields = [
       'firstName', 'lastName', 'email', 'password', 'googleId', 'picture',
       'authProvider', 'role', 'status', 'pharmacyName', 'pharmacyAddress',
@@ -416,15 +461,53 @@ const createDemoUsers = async () => {
   }
 };
 
+/**
+ * Authenticate user by Mobile Number and Password.
+ * DOB verification happens post-login inside the app, not here.
+ */
+const authenticateUserByMobile = async (mobileNumber, dateOfBirth, password) => {
+  const user = await findUserByMobile(mobileNumber);
+
+  if (!user) {
+    throw new Error('No user account found with this mobile number');
+  }
+
+  if (!user.password) {
+    throw new Error('Invalid credentials');
+  }
+
+  const isPasswordValid = await bcrypt.compare(password, user.password);
+  if (!isPasswordValid) {
+    throw new Error('Invalid credentials');
+  }
+
+  // Generate JWT token
+  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+  const token = jwt.sign(
+    { id: user.id, role: user.role },
+    jwtSecret,
+    { expiresIn: '1d' }
+  );
+
+  return {
+    user: sanitizeUser(user),
+    token,
+    // Flag if DOB verification is still needed post-login
+    requiresDobVerification: !!(user.dateOfBirth && user.dateOfBirth.trim())
+  };
+};
+
 module.exports = {
   getUsers,
   getUsersSync: getUsers,  // Alias for backward compatibility (now always async)
   findUserByEmail,
+  findUserByMobile,
   findUserById,
   createUser,
   updateUser,
   deleteUser,
   authenticateUser,
+  authenticateUserByMobile,
   createDemoUsers,
   isMongoConnected: isD1ConnectedCheck,  // Backward-compatible export name
   findOrCreateGoogleUser

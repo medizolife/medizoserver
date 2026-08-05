@@ -12,8 +12,24 @@ const createTransport = () => {
     throw new Error('Email credentials not configured. Please set EMAIL_USER and EMAIL_PASS in .env file.');
   }
   
+  if (process.env.EMAIL_SERVICE) {
+    return nodemailer.createTransport({
+      service: process.env.EMAIL_SERVICE,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+  }
+
+  const host = process.env.EMAIL_HOST || 'smtpout.secureserver.net';
+  const port = parseInt(process.env.EMAIL_PORT || '465', 10);
+  const secure = process.env.EMAIL_SECURE !== 'false';
+
   return nodemailer.createTransport({
-    service: process.env.EMAIL_SERVICE,
+    host,
+    port,
+    secure,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
@@ -30,7 +46,7 @@ const sendEmail = async (options) => {
   const transporter = createTransport();
   
   const mailOptions = {
-    from: `Healthcare Management System <${process.env.EMAIL_USER}>`,
+    from: process.env.EMAIL_FROM || `Medizo Life <${process.env.EMAIL_USER}>`,
     to: options.to,
     subject: options.subject,
     html: options.html

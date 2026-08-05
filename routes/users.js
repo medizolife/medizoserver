@@ -94,25 +94,53 @@ router.delete('/profile/picture', auth, async (req, res) => {
  */
 router.post('/patients/create', doctor, async (req, res) => {
   try {
-    const { firstName, lastName, email, phone, dateOfBirth, gender, address } = req.body;
+    const { firstName, lastName, email, phone, dateOfBirth, gender, address, noEmail } = req.body;
 
-    // Validate required fields
-    if (!firstName || !lastName || !email) {
-      return res.status(400).json({ message: 'First name, last name, and email are required' });
+    // Validate required fields based on noEmail flag
+    if (!firstName || !lastName) {
+      return res.status(400).json({ message: 'First name and last name are required' });
     }
 
-    // Check if email is valid
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ message: 'Invalid email format' });
+    if (noEmail) {
+      // No-email mode: require mobile number and DOB
+      if (!phone || !phone.trim()) {
+        return res.status(400).json({ message: 'Mobile number is required when patient has no email' });
+      }
+      if (!dateOfBirth || !dateOfBirth.trim()) {
+        return res.status(400).json({ message: 'Date of Birth is required when patient has no email' });
+      }
+    } else {
+      // Email mode: require email
+      if (!email || !email.trim()) {
+        return res.status(400).json({ message: 'Email address is required' });
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: 'Invalid email format' });
+      }
     }
 
-    // Create new patient with default password
+    // Generate temp password: [FirstName]@[DOBYear] or [FirstName]@medizo
+    let tempPassword = 'password123';
+    if (dateOfBirth && dateOfBirth.trim()) {
+      const dobYear = String(dateOfBirth).split('-')[0] || String(dateOfBirth).split('/')[2] || '';
+      tempPassword = dobYear ? `${firstName}@${dobYear}` : `${firstName}@medizo`;
+    } else {
+      tempPassword = `${firstName}@medizo`;
+    }
+
+    // Resolve the email to use (placeholder if noEmail)
+    const cleanPhone = (phone || '').replace(/[\s\-\(\)\+]/g, '');
+    const userEmail = noEmail
+      ? `patient_${cleanPhone || Date.now()}@patient.medizo.life`
+      : email.toLowerCase();
+
+    // Create new patient
     const newPatient = await createUser({
       firstName,
       lastName,
-      email: email.toLowerCase(),
-      password: 'password123', // Default password
+      email: userEmail,
+      password: tempPassword,
       role: 'patient',
       phone: phone || '',
       dateOfBirth: dateOfBirth || '',
@@ -123,7 +151,7 @@ router.post('/patients/create', doctor, async (req, res) => {
       createdByDoctor: req.user.id
     });
 
-    console.log('New patient created by doctor:', newPatient.id);
+    console.log('New patient created by doctor:', newPatient.id, noEmail ? '(no-email mode)' : '(email mode)');
 
     // Auto-link the new patient to this doctor so they appear in getMyPatients
     try {
@@ -140,13 +168,17 @@ router.post('/patients/create', doctor, async (req, res) => {
     }
 
     res.status(201).json({
-      message: 'Patient account created successfully. Default password is: password123',
-      patient: newPatient
+      message: `Patient account created successfully. Temporary password: ${tempPassword}`,
+      patient: newPatient,
+      tempPassword
     });
   } catch (error) {
     console.error('Create patient error:', error);
     if (error.message === 'User with this email already exists') {
       return res.status(400).json({ message: 'A patient with this email already exists' });
+    }
+    if (error.message === 'User with this mobile number already exists') {
+      return res.status(400).json({ message: 'A patient with this mobile number already exists' });
     }
     res.status(500).json({ message: 'Server error' });
   }

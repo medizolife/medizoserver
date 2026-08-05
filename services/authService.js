@@ -1,4 +1,4 @@
-const { createUser, authenticateUser, findUserByEmail, findOrCreateGoogleUser } = require('../models/user');
+const { createUser, authenticateUser, authenticateUserByMobile, findUserByEmail, findUserByMobile, updateUser, findOrCreateGoogleUser } = require('../models/user');
 const { OAuth2Client } = require('google-auth-library');
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '972944325297-fh67828kvguogf9coekjn6q07a2krv8o.apps.googleusercontent.com';
@@ -24,13 +24,19 @@ const validateRegistrationData = (userData) => {
   if (!userData.lastName || !userData.lastName.trim()) {
     errors.push('Last name is required');
   }
-  if (!userData.email || !userData.email.trim()) {
-    errors.push('Email is required');
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userData.email)) {
+  
+  const hasEmail = userData.email && userData.email.trim();
+  const hasMobile = (userData.phone && userData.phone.trim()) || (userData.mobileNumber && userData.mobileNumber.trim()) || (userData.contactNumber && userData.contactNumber.trim());
+
+  if (!hasEmail && !hasMobile) {
+    errors.push('Either Email or Mobile number is required');
+  }
+
+  if (hasEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userData.email)) {
     errors.push('Invalid email format');
   }
-  if (!userData.password || userData.password.length < 6) {
-    errors.push('Password must be at least 6 characters');
+  if (!userData.password || userData.password.length < 4) {
+    errors.push('Password must be at least 4 characters');
   }
   if (!userData.role || !['doctor', 'patient', 'pharmacist', 'admin'].includes(userData.role)) {
     errors.push('Valid role is required (doctor, patient, pharmacist, or admin)');
@@ -70,6 +76,62 @@ const loginUser = async (email, password) => {
 };
 
 /**
+ * Login user with mobile number, date of birth, and password
+ * @param {string} mobileNumber
+ * @param {string} dateOfBirth
+ * @param {string} password
+ */
+const loginUserByMobile = async (mobileNumber, dateOfBirth, password) => {
+  return await authenticateUserByMobile(mobileNumber, dateOfBirth, password);
+};
+
+/**
+ * Send Password Reset OTP email using GoDaddy email
+ */
+const sendForgotPasswordEmail = async (emailOrMobile) => {
+  let user = null;
+  if (emailOrMobile.includes('@')) {
+    user = await findUserByEmail(emailOrMobile);
+  } else {
+    user = await findUserByMobile(emailOrMobile);
+  }
+
+  if (!user) {
+    throw new Error('No user found with the provided Email or Mobile number');
+  }
+
+  const destinationEmail = user.email && !user.email.includes('@patient.medizo.life') ? user.email : null;
+  if (!destinationEmail) {
+    throw new Error('This user account does not have a registered email address. Please log in using your Mobile Number & Date of Birth.');
+  }
+
+  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+  await updateUser(user.id, { resetOtp: otpCode, resetOtpExpires: Date.now() + 15 * 60 * 1000 });
+
+  const { sendEmail } = require('./email');
+  await sendEmail({
+    to: destinationEmail,
+    subject: 'Your Password Reset OTP - Medizo Life',
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; max-width: 600px; margin: auto;">
+        <h2 style="color: #2563eb;">Medizo Life Password Reset</h2>
+        <p>Hello ${user.firstName},</p>
+        <p>Your password reset verification code is:</p>
+        <h1 style="color: #2563eb; letter-spacing: 5px; text-align: center;">${otpCode}</h1>
+        <p>This code will expire in 15 minutes.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+        <p style="font-size: 12px; color: #666;">This automated message was sent from info@medizo.life</p>
+      </div>
+    `
+  });
+
+  return { 
+    message: 'Password reset OTP sent to your registered email', 
+    emailMasked: destinationEmail.replace(/(.{2})(.*)(?=@)/, '$1***') 
+  };
+};
+
+/**
  * Verify Google ID token and extract user info
  * @param {string} credential Google ID token
  * @returns {Object} Google user info
@@ -95,6 +157,51 @@ const verifyGoogleToken = async (credential) => {
 };
 
 /**
+ * Update a patient's email address (replace @patient.medizo.life placeholder)
+ * @param {string} userId
+ * @param {string} newEmail
+ */
+const updateUserEmail = async (userId, newEmail) => {
+  if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+    throw new Error('Invalid email format');
+  }
+
+  // Check if email is already taken by another user
+  const existing = await findUserByEmail(newEmail.toLowerCase());
+  if (existing && existing.id !== userId) {
+    throw new Error('This email address is already registered to another account');
+  }
+
+  const updated = await updateUser(userId, { email: newEmail.toLowerCase() });
+  if (!updated) {
+    throw new Error('Failed to update email address');
+  }
+  return updated;
+};
+
+/**
+ * Update a patient's phone number
+ */
+const updateUserPhone = async (userId, phone) => {
+  const cleanPhone = (phone || '').replace(/[\s\-\(\)\+]/g, '');
+  if (!cleanPhone) {
+    throw new Error('A valid mobile number is required');
+  }
+
+  // Check if phone is already taken
+  const existing = await findUserByMobile(cleanPhone);
+  if (existing && existing.id !== userId) {
+    throw new Error('This mobile number is already registered to another account');
+  }
+
+  const updated = await updateUser(userId, { phone: cleanPhone });
+  if (!updated) {
+    throw new Error('Failed to update mobile number');
+  }
+  return updated;
+};
+
+/**
  * Login or register user via Google OAuth
  * @param {string} credential Google ID token
  * @param {string} role User role (doctor/patient) - only used for new users
@@ -114,10 +221,110 @@ const googleLogin = async (credential, role = 'patient') => {
   }
 };
 
+/**
+ * Send Login OTP to user's registered email
+ * @param {string} email 
+ */
+const sendLoginOtp = async (email) => {
+  if (!email || !email.trim()) {
+    throw new Error('Email address is required');
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  if (cleanEmail.endsWith('@patient.medizo.life')) {
+    throw new Error('This account does not have a real email address registered. Please log in using your Mobile Number & Date of Birth.');
+  }
+
+  const user = await findUserByEmail(cleanEmail);
+  if (!user) {
+    throw new Error('No account found with this email address');
+  }
+
+  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+  await updateUser(user.id, { loginOtp: otpCode, loginOtpExpires: Date.now() + 10 * 60 * 1000 });
+
+  try {
+    const { sendEmail } = require('./email');
+    await sendEmail({
+      to: cleanEmail,
+      subject: 'Your Login Verification Code - Medizo Life',
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 12px; max-width: 600px; margin: auto;">
+          <h2 style="color: #1A312C; font-weight: 800;">Medizo Life Login Verification</h2>
+          <p>Hello ${user.firstName},</p>
+          <p>Your 6-digit login verification OTP code is:</p>
+          <div style="background: #e6f4f0; padding: 16px; border-radius: 10px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1A312C;">${otpCode}</span>
+          </div>
+          <p>This code is valid for 10 minutes. If you did not request this login code, please ignore this message.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="font-size: 12px; color: #666;">Sent automatically by Medizo Life Healthcare Systems</p>
+        </div>
+      `
+    });
+  } catch (emailErr) {
+    console.warn('Failed to send login OTP email:', emailErr.message);
+  }
+
+  return {
+    message: 'OTP verification code sent to your email',
+    emailMasked: cleanEmail.replace(/(.{2})(.*)(?=@)/, '$1***')
+  };
+};
+
+/**
+ * Login user via Email and OTP
+ * @param {string} email 
+ * @param {string} otp 
+ */
+const loginUserByEmailOtp = async (email, otp) => {
+  if (!email || !otp) {
+    throw new Error('Email and OTP code are required');
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanOtp = String(otp).trim();
+
+  const user = await findUserByEmail(cleanEmail);
+  if (!user) {
+    throw new Error('User account not found');
+  }
+
+  if (!user.loginOtp || String(user.loginOtp).trim() !== cleanOtp || !user.loginOtpExpires || user.loginOtpExpires < Date.now()) {
+    throw new Error('Invalid or expired OTP code. Please request a new verification code.');
+  }
+
+  // Clear used OTP
+  await updateUser(user.id, { loginOtp: null, loginOtpExpires: null });
+
+  // Generate JWT token
+  const jwt = require('jsonwebtoken');
+  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+  const token = jwt.sign(
+    { id: user.id, role: user.role },
+    jwtSecret,
+    { expiresIn: '1d' }
+  );
+
+  const sanitizeUser = (u) => {
+    if (!u) return null;
+    const { password, ...rest } = u;
+    return rest;
+  };
+
+  return { user: sanitizeUser(user), token };
+};
+
 module.exports = {
   verifyGoogleToken,
   googleLogin,
   loginUser,
+  loginUserByMobile,
+  sendForgotPasswordEmail,
+  updateUserEmail,
+  updateUserPhone,
   registerUser,
-  validateRegistrationData
+  validateRegistrationData,
+  sendLoginOtp,
+  loginUserByEmailOtp
 };
