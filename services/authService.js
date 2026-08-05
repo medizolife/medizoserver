@@ -240,7 +240,7 @@ const sendLoginOtp = async (email) => {
 
   const user = await findUserByEmail(cleanEmail);
   if (!user) {
-    throw new Error('No account found with this email address');
+    throw new Error('No Medizo account found with this email address. Please create an account first to select your role (Doctor or Patient).');
   }
 
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -304,7 +304,7 @@ const loginUserByEmailOtp = async (email, otp) => {
 
   const user = await findUserByEmail(cleanEmail);
   if (!user) {
-    throw new Error('User account not found');
+    throw new Error('No Medizo account found with this email address. Please create an account first to select your role (Doctor or Patient).');
   }
 
   const now = Date.now();
