@@ -156,16 +156,24 @@ router.put('/profile', doctor, async (req, res) => {
       qualifications
     } = req.body;
     
+    // Server-side safety: strip base64 data:image strings from image fields.
+    // Images should be uploaded via dedicated multipart endpoints; only URL paths are stored here.
+    const sanitizeImageField = (val) => {
+      if (!val) return val;
+      if (typeof val === 'string' && val.startsWith('data:')) return undefined;
+      return val;
+    };
+    
     // Update user with all fields
     const updatedDoctor = await updateUser(doctorId, {
       firstName,
       lastName,
       specialization,
       contactNumber,
-      profileImage,
-      clinicLogo,
-      signature,
-      stamp,
+      profileImage: sanitizeImageField(profileImage),
+      clinicLogo: sanitizeImageField(clinicLogo),
+      signature: sanitizeImageField(signature),
+      stamp: sanitizeImageField(stamp),
       clinicName,
       clinicAddress,
       clinicLatitude,

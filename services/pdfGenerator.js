@@ -65,7 +65,9 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const doc = new PDFDocument({ margin: M, size: 'A4' });
 
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="prescription-${prescriptionId}.pdf"`);
+  const isDownload = res.req?.query?.download === 'true';
+  const dispositionType = isDownload ? 'attachment' : 'inline';
+  res.setHeader('Content-Disposition', `${dispositionType}; filename="prescription-${prescriptionId}.pdf"`);
   doc.pipe(res);
 
   let y = M;

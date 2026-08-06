@@ -45,7 +45,9 @@ const connectDB = async () => {
         'ALTER TABLE users ADD COLUMN clinicLatitude REAL DEFAULT NULL;',
         'ALTER TABLE users ADD COLUMN clinicLongitude REAL DEFAULT NULL;',
         'ALTER TABLE users ADD COLUMN clinicLocationAccuracy REAL DEFAULT NULL;',
-        'ALTER TABLE users ADD COLUMN clinicPlaceName TEXT DEFAULT "";'
+        'ALTER TABLE users ADD COLUMN clinicPlaceName TEXT DEFAULT "";',
+        // Ensure stamp column exists (was in schema.sql but missing from migrations)
+        'ALTER TABLE users ADD COLUMN stamp TEXT DEFAULT "";'
       ];
       for (const colSql of alterCols) {
         try {
