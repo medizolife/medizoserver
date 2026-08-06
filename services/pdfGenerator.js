@@ -17,8 +17,14 @@ const Image = require('../models/ImageModel');
 async function loadImageBuffer(urlPath) {
   if (!urlPath) return null;
   try {
+    if (typeof urlPath === 'string' && urlPath.startsWith('data:image/')) {
+      const base64Data = urlPath.split(',')[1];
+      if (base64Data) return Buffer.from(base64Data, 'base64');
+    }
+    // Clean query parameters from urlPath if any, e.g. /api/doctors/images/stamp.png?v=123
+    const cleanUrl = String(urlPath).split('?')[0];
     // Extract filename from API path like /api/doctors/images/<filename>
-    const filename = urlPath.split('/').pop();
+    const filename = cleanUrl.split('/').pop();
     if (!filename) return null;
     const imgDoc = await Image.findOne({ filename });
     if (imgDoc && imgDoc.data) return imgDoc.data;
@@ -26,7 +32,8 @@ async function loadImageBuffer(urlPath) {
     console.error('D1 image lookup error:', e.message);
   }
   // Fallback: try local file
-  const localPath = path.join(__dirname, '..', urlPath.replace(/^\//, ''));
+  const cleanUrl = String(urlPath).split('?')[0];
+  const localPath = path.join(__dirname, '..', cleanUrl.replace(/^\//, ''));
   if (fs.existsSync(localPath)) return fs.readFileSync(localPath);
   return null;
 }
@@ -111,8 +118,15 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     else if (typeof a === 'string') allergyList = a.split(',').map(s => s.trim()).filter(Boolean);
   }
 
-  const pName      = `${patient.firstName} ${patient.middleName || ''} ${patient.lastName}`.replace(/\s+/g, ' ').trim();
-  const pAge       = patient.dateOfBirth ? Math.floor((Date.now() - new Date(patient.dateOfBirth).getTime()) / (365.25 * 86400000)) + ' Years' : '';
+  const pName      = `${patient.firstName || ''} ${patient.middleName || ''} ${patient.lastName || ''}`.replace(/\s+/g, ' ').trim() || 'Patient';
+  let pAge = '';
+  if (patient.dateOfBirth) {
+    const dobTime = new Date(patient.dateOfBirth).getTime();
+    if (!isNaN(dobTime)) {
+      const years = Math.floor((Date.now() - dobTime) / (365.25 * 86400000));
+      if (years >= 0 && years < 150) pAge = `${years} Years`;
+    }
+  }
   const pGender    = patient.gender ? patient.gender.charAt(0).toUpperCase() + patient.gender.slice(1) : '';
   const pAgeGender = [pAge, pGender].filter(Boolean).join(' / ');
   const pId        = patient.id ? `PT-${String(patient.id).slice(-6)}` : '';
@@ -124,10 +138,10 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const pBlood     = patient.bloodType || '';
   const pEmergency = patient.emergencyContact || '';
 
-  const prescDate = prescription.createdAt ? new Date(prescription.createdAt) : new Date();
+  const prescDate = prescription.createdAt && !isNaN(new Date(prescription.createdAt).getTime()) ? new Date(prescription.createdAt) : new Date();
   const fDate     = prescDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const fTime     = prescDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-  const rxId      = `RX-${prescDate.getFullYear()}-${String(prescDate.getMonth() + 1).padStart(2, '0')}-${String(prescDate.getDate()).padStart(2, '0')}-${String(prescriptionId).slice(-5).padStart(5, '0')}`;
+  const rxId      = `RX-${prescDate.getFullYear()}-${String(prescDate.getMonth() + 1).padStart(2, '0')}-${String(prescDate.getDate()).padStart(2, '0')}-${String(prescriptionId || '00000').slice(-5).padStart(5, '0')}`;
 
   // ── low-level helpers ───────────────────────────────────────────
 
@@ -165,7 +179,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const newPage = () => { addFooter(); doc.addPage(); pg++; y = M; };
 
   /** Ensure `needed` vertical pixels are available, break page if not */
-  const ensureSpace = (needed = 60) => { if (y + needed > maxY) newPage(); };
+  const ensureSpace = (needed = 60) => { if (y + needed > maxY && y > M + 5) newPage(); };
 
   /** Section title bar (dark background, white text) */
   const titleBar = (title) => {
@@ -226,8 +240,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   doc.roundedRect(M, y, CW, hdrH, 4).fillAndStroke(C.hdrBg, C.primary);
   doc.lineWidth(1.5);
 
+  const docFirstName = (doctor.firstName || '').trim();
+  const docLastName = (doctor.lastName || '').trim();
+  const doctorDisplayName = docFirstName.match(/^dr\.?\s+/i)
+    ? `${docFirstName} ${docLastName}`.trim()
+    : `Dr. ${docFirstName} ${docLastName}`.trim();
+
   doc.font('Helvetica-Bold').fontSize(15).fillColor(C.primary)
-    .text(`Dr. ${doctor.firstName} ${doctor.lastName}`, M + 10, y + 8, { width: CW * 0.55 });
+    .text(doctorDisplayName, M + 10, y + 8, { width: CW * 0.55 });
 
   let hY = y + 26;
   if (doctor.specialization) {
@@ -787,7 +807,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       });
       doc.moveTo(M, sigY + 68).lineTo(M + 170, sigY + 68).strokeColor(C.text).lineWidth(0.5).stroke();
       doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
-        .text(`Dr. ${doctor.firstName} ${doctor.lastName}`, M, sigY + 72);
+        .text(doctorDisplayName, M, sigY + 72);
       siy = sigY + 86;
       if (doctor.specialization) {
         const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
@@ -799,7 +819,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       console.error('Signature render error:', sigErr);
       doc.moveTo(M, sigY + 28).lineTo(M + 170, sigY + 28).strokeColor(C.text).lineWidth(0.5).stroke();
       doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
-        .text(`Dr. ${doctor.firstName} ${doctor.lastName}`, M, sigY + 32);
+        .text(doctorDisplayName, M, sigY + 32);
       siy = sigY + 54;
       if (doctor.specialization) {
         const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
@@ -811,7 +831,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   } else {
     doc.moveTo(M, sigY + 28).lineTo(M + 170, sigY + 28).strokeColor(C.text).lineWidth(0.5).stroke();
     doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
-      .text(`Dr. ${doctor.firstName} ${doctor.lastName}`, M, sigY + 32);
+      .text(doctorDisplayName, M, sigY + 32);
     siy = sigY + 54;
     if (doctor.specialization) {
       const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
