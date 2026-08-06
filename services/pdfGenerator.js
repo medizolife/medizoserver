@@ -130,6 +130,25 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const rxId      = `RX-${prescDate.getFullYear()}-${String(prescDate.getMonth() + 1).padStart(2, '0')}-${String(prescDate.getDate()).padStart(2, '0')}-${String(prescriptionId).slice(-5).padStart(5, '0')}`;
 
   // ── low-level helpers ───────────────────────────────────────────
+
+  /** Safely convert any value to a printable string (prevents [object Object]) */
+  const safeStr = (val) => {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+    if (Array.isArray(val)) return val.map(safeStr).filter(Boolean).join(', ');
+    if (typeof val === 'object') {
+      if (val.label) return String(val.label);
+      if (val.value) return String(val.value);
+      if (val.text)  return String(val.text);
+      if (val.name)  return String(val.name);
+      const entries = Object.entries(val).filter(([, v]) => v !== null && v !== undefined && v !== '');
+      if (entries.length === 0) return '';
+      return entries.map(([k, v]) => `${k}: ${v}`).join(', ');
+    }
+    return String(val);
+  };
+
   const addFooter = () => {
     const fY = PH - FOOTER_ZONE + 6;
     doc.moveTo(M, fY).lineTo(PW - M, fY).strokeColor('#AAAAAA').lineWidth(0.5).stroke();
@@ -160,28 +179,32 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   /** Bold label + value pair at (x, atY) */
   const bv = (label, val, x, atY) => {
     if (!val) return;
+    const s = safeStr(val);
+    if (!s) return;
     doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text);
     const lw = doc.widthOfString(label + ' ');
     doc.text(label + ' ', x, atY, { lineBreak: false });
     doc.font('Helvetica').fontSize(9).fillColor(C.text)
-      .text(String(val), x + lw, atY, { lineBreak: false });
+      .text(s, x + lw, atY, { lineBreak: false });
   };
 
   /** Bullet point */
   const bullet = (text, indent = M + 15, color = C.text) => {
     ensureSpace(16);
+    const s = safeStr(text);
     doc.font('Helvetica').fontSize(9.5).fillColor(color);
-    const h = doc.heightOfString(`\u2022 ${text}`, { width: PW - M - indent - 5 });
-    doc.text(`\u2022 ${text}`, indent, y, { width: PW - M - indent - 5 });
+    const h = doc.heightOfString(`\u2022 ${s}`, { width: PW - M - indent - 5 });
+    doc.text(`\u2022 ${s}`, indent, y, { width: PW - M - indent - 5 });
     y += Math.max(13, h + 1);
   };
 
   /** Warning bullet (red with triangle) */
   const warnBullet = (text, indent = M + 15) => {
     ensureSpace(16);
+    const s = safeStr(text);
     doc.font('Helvetica').fontSize(9.5).fillColor(C.warn);
-    const h = doc.heightOfString(`\u25B3 ${text}`, { width: PW - M - indent - 5 });
-    doc.text(`\u25B3 ${text}`, indent, y, { width: PW - M - indent - 5 });
+    const h = doc.heightOfString(`\u25B3 ${s}`, { width: PW - M - indent - 5 });
+    doc.text(`\u25B3 ${s}`, indent, y, { width: PW - M - indent - 5 });
     y += Math.max(13, h + 1);
   };
 
@@ -389,29 +412,70 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
   // ─── Rx — PRESCRIBED MEDICATIONS ───────────────────────────────
   if (meds.length > 0) {
+    // safeStr is defined at the top-level scope
+
     const col = {
-      num:   { x: M + 1, w: 25 },
-      name:  { x: M + 26, w: 145 },
-      dos:   { x: M + 171, w: 90 },
-      dur:   { x: M + 261, w: 85 },
-      instr: { x: M + 346, w: CW - 348 },
+      num:   { x: M + 1, w: 28 },
+      name:  { x: M + 29, w: 140 },
+      dos:   { x: M + 169, w: 95 },
+      dur:   { x: M + 264, w: 90 },
+      instr: { x: M + 354, w: CW - 356 },
+    };
+
+    /** Build combined instruction string for a medication */
+    const buildInstrStr = (med) => {
+      const parts = [];
+      const t = safeStr(med.timing);
+      const mr = safeStr(med.mealRelation);
+      const ins = safeStr(med.instructions);
+      if (t) parts.push(t);
+      if (mr) parts.push(mr);
+      if (ins) parts.push(ins);
+      return parts.length > 0 ? parts.join(' | ') : '-';
+    };
+
+    /** Build dosage string for a medication */
+    const buildDosStr = (med) => {
+      let s = safeStr(med.dosage);
+      if (med.frequency) {
+        const freqMap = {'1': 'Once daily', '2': 'Twice daily', '3': 'Thrice daily', '4': 'Four times daily', 'SOS': 'As needed (SOS)'};
+        const freqLabel = freqMap[safeStr(med.frequency)] || safeStr(med.frequency);
+        s = s ? `${s}\n(${freqLabel})` : freqLabel;
+      }
+      return s || '-';
+    };
+
+    /** Build duration string for a medication */
+    const buildDurStr = (med) => {
+      let s = safeStr(med.duration);
+      if (!s && (med.durationWeeks || med.durationDays)) {
+        const p = [];
+        if (med.durationWeeks) p.push(`${safeStr(med.durationWeeks)} Weeks`);
+        if (med.durationDays)  p.push(`${safeStr(med.durationDays)} Days`);
+        s = p.join(' ');
+      }
+      const qty = safeStr(med.quantity);
+      if (qty) {
+        s = s ? `${s}\n[Qty: ${qty}]` : `Qty: ${qty}`;
+      }
+      return s || '-';
     };
 
     // Pre-calculate total height for all medications to keep them together
     let medsTotalH = 30; // title bar height
-    medsTotalH += 20; // table header
+    medsTotalH += 22; // table header
     meds.forEach((med) => {
       doc.font('Helvetica').fontSize(8.5);
-      let instrParts__ = [];
-      if (med.timing) instrParts__.push(med.timing);
-      if (med.mealRelation) instrParts__.push(med.mealRelation);
-      if (med.instructions) instrParts__.push(med.instructions);
-      const instrStr = instrParts__.length > 0 ? instrParts__.join(' | ') : '-';
+      const instrStr = buildInstrStr(med);
       const instrH = doc.heightOfString(instrStr, { width: col.instr.w - 8 });
-      const nameStr = med.name + (med.type ? `\n(${med.type})` : '');
+      const dosStr = buildDosStr(med);
+      const dosH = doc.heightOfString(dosStr, { width: col.dos.w - 8 });
+      const durStr = buildDurStr(med);
+      const durH = doc.heightOfString(durStr, { width: col.dur.w - 8 });
+      const nameStr = safeStr(med.name) + (med.type ? `\n(${safeStr(med.type)})` : '');
       doc.font('Helvetica-Bold').fontSize(9);
       const nameH = doc.heightOfString(nameStr, { width: col.name.w - 8 });
-      const rowH = Math.max(26, instrH + 8, nameH + 8);
+      const rowH = Math.max(30, instrH + 10, nameH + 10, dosH + 10, durH + 10);
       medsTotalH += rowH;
     });
     // Add space for medication notes if present
@@ -419,7 +483,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       medsTotalH += 18; // subheader
       medNotes.forEach(note => {
         doc.font('Helvetica').fontSize(9.5);
-        medsTotalH += Math.max(16, doc.heightOfString(`\u25B3 ${note}`, { width: PW - M - (M + 15) - 5 }) + 1);
+        medsTotalH += Math.max(16, doc.heightOfString(`\u25B3 ${safeStr(note)}`, { width: PW - M - (M + 15) - 5 }) + 1);
       });
     }
     medsTotalH += 16; // padding
@@ -429,87 +493,73 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
     titleBar('PRESCRIBED MEDICATIONS');
 
-    // table header
+    // ── table header ──
     const thY = y;
-    doc.rect(M + 1, y, CW - 2, 18).fill(C.tblHdr);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text);
-    doc.text('No.', col.num.x + 3, y + 4, { width: col.num.w, align: 'center' });
-    doc.text('Medicine Name', col.name.x + 4, y + 4);
-    doc.text('Dosage', col.dos.x + 4, y + 4, { align: 'center' });
-    doc.text('Duration / Qty', col.dur.x + 4, y + 4, { align: 'center' });
-    doc.text('Instructions', col.instr.x + 4, y + 4);
+    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
+    doc.text('No.',             col.num.x + 2,   y + 5, { width: col.num.w - 4,   align: 'center' });
+    doc.text('Medicine Name',   col.name.x + 4,  y + 5, { width: col.name.w - 8 });
+    doc.text('Dosage',          col.dos.x + 4,   y + 5, { width: col.dos.w - 8,   align: 'center' });
+    doc.text('Duration / Qty',  col.dur.x + 4,   y + 5, { width: col.dur.w - 8,   align: 'center' });
+    doc.text('Instructions',    col.instr.x + 4, y + 5, { width: col.instr.w - 8 });
 
     // header borders
     doc.strokeColor(C.text).lineWidth(0.5);
     doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
-    doc.moveTo(M + 1, y + 18).lineTo(PW - M - 1, y + 18).stroke();
+    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
     [col.name.x, col.dos.x, col.dur.x, col.instr.x].forEach(cx => {
-      doc.moveTo(cx, y).lineTo(cx, y + 18).stroke();
+      doc.moveTo(cx, y).lineTo(cx, y + 20).stroke();
     });
-    doc.moveTo(M + 1, y).lineTo(M + 1, y + 18).stroke();
-    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 18).stroke();
-    y += 20;
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
+    y += 22;
 
-    // rows
+    // ── data rows ──
     meds.forEach((med, idx) => {
       // compute row height
       doc.font('Helvetica').fontSize(8.5);
-      let instrParts_ = [];
-      if (med.timing) instrParts_.push(med.timing);
-      if (med.mealRelation) instrParts_.push(med.mealRelation);
-      if (med.instructions) instrParts_.push(med.instructions);
-      const instrStr = instrParts_.length > 0 ? instrParts_.join(' | ') : '-';
+      const instrStr = buildInstrStr(med);
       const instrH = doc.heightOfString(instrStr, { width: col.instr.w - 8 });
-      const nameStr = med.name + (med.type ? `\n(${med.type})` : '');
+      const dosStr = buildDosStr(med);
+      const dosH = doc.heightOfString(dosStr, { width: col.dos.w - 8 });
+      const durStr = buildDurStr(med);
+      const durH = doc.heightOfString(durStr, { width: col.dur.w - 8 });
+      const nameStr = safeStr(med.name) + (med.type ? `\n(${safeStr(med.type)})` : '');
       doc.font('Helvetica-Bold').fontSize(9);
       const nameH = doc.heightOfString(nameStr, { width: col.name.w - 8 });
-      const rowH = Math.max(26, instrH + 8, nameH + 8);
+      const rowH = Math.max(30, instrH + 10, nameH + 10, dosH + 10, durH + 10);
 
       const rowY = y;
 
-      // cell content
-      doc.font('Helvetica').fontSize(9).fillColor(C.text)
-        .text(`${idx + 1}`, col.num.x + 3, rowY + 4, { width: col.num.w, align: 'center' });
+      // Alternate row background for readability
+      if (idx % 2 === 0) {
+        doc.rect(M + 1, rowY, CW - 2, rowH).fill('#F8FCFA');
+      }
 
+      // cell content — No.
+      doc.font('Helvetica').fontSize(9).fillColor(C.text)
+        .text(`${idx + 1}`, col.num.x + 2, rowY + 6, { width: col.num.w - 4, align: 'center' });
+
+      // cell content — Medicine Name
       doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
-        .text(med.name || '', col.name.x + 4, rowY + 4, { width: col.name.w - 8 });
+        .text(safeStr(med.name) || '', col.name.x + 4, rowY + 6, { width: col.name.w - 8 });
       if (med.type) {
-        const nh = doc.font('Helvetica-Bold').fontSize(9).heightOfString(med.name || '', { width: col.name.w - 8 });
+        const nh = doc.font('Helvetica-Bold').fontSize(9).heightOfString(safeStr(med.name) || '', { width: col.name.w - 8 });
         doc.font('Helvetica').fontSize(8).fillColor('#666666')
-          .text(`(${med.type})`, col.name.x + 4, rowY + 4 + nh, { width: col.name.w - 8 });
+          .text(`(${safeStr(med.type)})`, col.name.x + 4, rowY + 6 + nh, { width: col.name.w - 8 });
       }
 
-      let dosStr = med.dosage || '';
-      if (med.frequency) {
-        const freqMap = {'1': 'Once daily', '2': 'Twice daily', '3': 'Thrice daily', '4': 'Four times daily', 'SOS': 'As needed (SOS)'};
-        const freqLabel = freqMap[med.frequency] || med.frequency;
-        if (dosStr) dosStr += ` (${freqLabel})`;
-        else dosStr = freqLabel;
-      }
-      doc.font('Helvetica').fontSize(9).fillColor(C.text)
-        .text(dosStr || '-', col.dos.x + 4, rowY + 4, { width: col.dos.w - 8, align: 'center' });
-
-      let durStr = med.duration || '';
-      if (!durStr && (med.durationWeeks || med.durationDays)) {
-        const p = [];
-        if (med.durationWeeks) p.push(`${med.durationWeeks}w`);
-        if (med.durationDays) p.push(`${med.durationDays}d`);
-        durStr = p.join(' ');
-      }
-      if (med.quantity) {
-        durStr = durStr ? `${durStr}\n[Qty: ${med.quantity}]` : `Qty: ${med.quantity}`;
-      }
+      // cell content — Dosage
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-        .text(durStr || '-', col.dur.x + 4, rowY + 4, { width: col.dur.w - 8, align: 'center' });
+        .text(dosStr, col.dos.x + 4, rowY + 6, { width: col.dos.w - 8, align: 'center' });
 
-      // Build combined instructions from timing, meal relation, frequency, and instructions fields
-      let instrParts = [];
-      if (med.timing) instrParts.push(med.timing);
-      if (med.mealRelation) instrParts.push(med.mealRelation);
-      if (med.instructions) instrParts.push(med.instructions);
-      const combinedInstrStr = instrParts.length > 0 ? instrParts.join(' | ') : '-';
+      // cell content — Duration / Qty
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-        .text(combinedInstrStr, col.instr.x + 4, rowY + 4, { width: col.instr.w - 8 });
+        .text(durStr, col.dur.x + 4, rowY + 6, { width: col.dur.w - 8, align: 'center' });
+
+      // cell content — Instructions
+      doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
+        .text(instrStr, col.instr.x + 4, rowY + 6, { width: col.instr.w - 8 });
 
       // row borders
       doc.strokeColor(C.border).lineWidth(0.3);
@@ -526,7 +576,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     // medication notes
     if (medNotes.length > 0) {
       subHdr('Important Medication Notes:', M + 10, C.warn);
-      medNotes.forEach(note => warnBullet(note));
+      medNotes.forEach(note => warnBullet(safeStr(note)));
       y += 4;
     }
     y += 6;
@@ -561,19 +611,19 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
     titleBar('INVESTIGATIONS REQUIRED');
     invList.forEach((inv, idx) => {
+      const testName = safeStr(inv.testName) || safeStr(inv);
       doc.font('Helvetica-Bold').fontSize(9.5).fillColor(C.text);
-      const numStr = `${idx + 1}. `;
-      doc.text(numStr, M + 12, y, { continued: true });
-      doc.text(inv.testName || '');
-      if (inv.reason) {
+      doc.text(`${idx + 1}. ${testName}`, M + 12, y, { width: CW - 30 });
+      const reason = safeStr(inv.reason);
+      if (reason) {
         doc.font('Helvetica').fontSize(9).fillColor(C.text)
-          .text(`   ${inv.reason}`, M + 22, y + 13, { width: CW - 40 });
+          .text(`   ${reason}`, M + 22, y + 13, { width: CW - 40 });
         y += 13;
       }
       y += 14;
       const details = [];
-      if (inv.priority) details.push(`Priority: ${inv.priority}`);
-      if (inv.fasting)  details.push(`Fasting required: ${inv.fasting}`);
+      if (inv.priority) details.push(`Priority: ${safeStr(inv.priority)}`);
+      if (inv.fasting)  details.push(`Fasting required: ${safeStr(inv.fasting)}`);
       if (details.length) {
         doc.font('Helvetica-Oblique').fontSize(9).fillColor('#666666')
           .text(details.join(' \u2014 '), M + 22, y, { width: CW - 40 });
@@ -582,9 +632,10 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       y += 2;
     });
     if (invNotes) {
+      const notesStr = safeStr(invNotes);
       doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
         .text('Note: ', M + 10, y, { continued: true });
-      doc.font('Helvetica').text(invNotes);
+      doc.font('Helvetica').text(notesStr, { width: CW - 60 });
       y += 14;
     }
     y += 6;
@@ -640,8 +691,9 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     stickyTotalH += addNotesH + 8;
   }
 
-  // Signature & stamp section height (accounts for signature image if present)
+  // Signature & stamp section height (accounts for signature/stamp image if present)
   const signatureBuf = await loadImageBuffer(doctor.signature);
+  const stampBuf = await loadImageBuffer(doctor.stamp);
   const hasSignatureImg = !!signatureBuf;
   const sigStampH = hasSignatureImg ? 155 : 115;
   stickyTotalH += sigStampH;
@@ -720,74 +772,82 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   // ─── SIGNATURE & STAMP ─────────────────────────────────────────
   y += 10;
   const sigY = y;
+  let siy = sigY + 54;
 
   doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text).text('Prescribed by:', M, sigY);
   
-  // Display uploaded signature image if available
+  // Render signature (image or text fallback)
   if (signatureBuf) {
     try {
-      // Render the signature image
       const sigImgW = 150, sigImgH = 50;
       doc.image(signatureBuf, M, sigY + 14, {
         fit: [sigImgW, sigImgH],
         align: 'left',
         valign: 'center'
       });
-      // Draw a line under the signature
       doc.moveTo(M, sigY + 68).lineTo(M + 170, sigY + 68).strokeColor(C.text).lineWidth(0.5).stroke();
       doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
         .text(`Dr. ${doctor.firstName} ${doctor.lastName}`, M, sigY + 72);
-      let siy = sigY + 86;
+      siy = sigY + 86;
       if (doctor.specialization) {
         const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
         doc.font('Helvetica').fontSize(9).text(spec, M, siy); siy += 12;
       }
       if (doctor.registrationNumber) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${doctor.registrationNumber}`, M, siy); siy += 12; }
       doc.font('Helvetica').fontSize(9).text(`Date: ${fDate}`, M, siy);
-
-    
     } catch (sigErr) {
       console.error('Signature render error:', sigErr);
-      // Fallback to regular signature section without image
       doc.moveTo(M, sigY + 28).lineTo(M + 170, sigY + 28).strokeColor(C.text).lineWidth(0.5).stroke();
       doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
         .text(`Dr. ${doctor.firstName} ${doctor.lastName}`, M, sigY + 32);
-      let siy = sigY + 54;
+      siy = sigY + 54;
       if (doctor.specialization) {
         const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
         doc.font('Helvetica').fontSize(9).text(spec, M, siy); siy += 12;
       }
       if (doctor.registrationNumber) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${doctor.registrationNumber}`, M, siy); siy += 12; }
       doc.font('Helvetica').fontSize(9).text(`Date: ${fDate}`, M, siy);
-
-    
-
-      y = Math.max(siy + 18, sigY + stampH + 20);
     }
   } else {
-    // No signature uploaded - show regular signature section
     doc.moveTo(M, sigY + 28).lineTo(M + 170, sigY + 28).strokeColor(C.text).lineWidth(0.5).stroke();
     doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
       .text(`Dr. ${doctor.firstName} ${doctor.lastName}`, M, sigY + 32);
-    let siy = sigY + 54;
+    siy = sigY + 54;
     if (doctor.specialization) {
       const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
       doc.font('Helvetica').fontSize(9).text(spec, M, siy); siy += 12;
     }
     if (doctor.registrationNumber) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${doctor.registrationNumber}`, M, siy); siy += 12; }
     doc.font('Helvetica').fontSize(9).text(`Date: ${fDate}`, M, siy);
+  }
 
-    // stamp box
-    const stampX = PW - M - 150, stampW = 140, stampH = 70;
+  // Render Doctor's Stamp (image or text placeholder)
+  const stampX = PW - M - 150, stampW = 140, stampH = 70;
+  let stampRendered = false;
+  if (stampBuf) {
+    try {
+      doc.rect(stampX, sigY + 5, stampW, stampH).strokeColor(C.primary).lineWidth(1).stroke();
+      doc.image(stampBuf, stampX + 5, sigY + 10, {
+        fit: [stampW - 10, stampH - 10],
+        align: 'center',
+        valign: 'center'
+      });
+      stampRendered = true;
+    } catch (stampErr) {
+      console.error('Stamp render error:', stampErr);
+    }
+  }
+
+  if (!stampRendered) {
     doc.rect(stampX, sigY + 5, stampW, stampH).strokeColor(C.text).lineWidth(1).stroke();
     doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
       .text("DOCTOR'S", stampX, sigY + 20, { width: stampW, align: 'center' });
     doc.text('STAMP', stampX, sigY + 33, { width: stampW, align: 'center' });
     doc.font('Helvetica').fontSize(8).fillColor('#666666')
       .text('(Digital Signature)', stampX, sigY + 48, { width: stampW, align: 'center' });
-
-    y = Math.max(siy + 18, sigY + stampH + 20);
   }
+
+  y = Math.max(siy + 18, sigY + stampH + 20);
 
   // page footer on last page
   addFooter();

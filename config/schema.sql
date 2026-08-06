@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS users (
   specialization TEXT DEFAULT '',
   licenseNumber TEXT DEFAULT '',
   clinicAddress TEXT DEFAULT '',
+  clinicLatitude REAL DEFAULT NULL,
+  clinicLongitude REAL DEFAULT NULL,
+  clinicLocationAccuracy REAL DEFAULT NULL,
+  clinicPlaceName TEXT DEFAULT '',
   experience TEXT DEFAULT '',
   qualifications TEXT DEFAULT '',
 
@@ -31,6 +35,7 @@ CREATE TABLE IF NOT EXISTS users (
   profileImage TEXT DEFAULT '',
   clinicLogo TEXT DEFAULT '',
   signature TEXT DEFAULT '',
+  stamp TEXT DEFAULT '',
 
   -- Extended contact information for doctors
   clinicName TEXT DEFAULT '',

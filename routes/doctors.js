@@ -137,6 +137,10 @@ router.put('/profile', doctor, async (req, res) => {
       signature,
       clinicName,
       clinicAddress,
+      clinicLatitude,
+      clinicLongitude,
+      clinicLocationAccuracy,
+      clinicPlaceName,
       alternateEmail,
       secondaryPhone,
       fax,
@@ -162,6 +166,10 @@ router.put('/profile', doctor, async (req, res) => {
       signature,
       clinicName,
       clinicAddress,
+      clinicLatitude,
+      clinicLongitude,
+      clinicLocationAccuracy,
+      clinicPlaceName,
       alternateEmail,
       secondaryPhone,
       fax,
@@ -401,6 +409,64 @@ router.post('/upload-signature', doctor, async (req, res) => {
     }
   } catch (error) {
     console.error('Upload signature error:', error);
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+});
+
+/**
+ * @route   POST /api/doctors/upload-stamp
+ * @desc    Upload doctor stamp (max 20MB, compressed, stored in D1)
+ * @access  Private (Doctor only)
+ */
+router.post('/upload-stamp', doctor, async (req, res) => {
+  try {
+    // Handle multer upload
+    await new Promise((resolve, reject) => {
+      upload.single('stamp')(req, res, (err) => {
+        if (err) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            reject(new Error('File size must be less than 20MB'));
+          } else {
+            reject(err);
+          }
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+    
+    const doctorId = req.user.id;
+    const filename = 'stamp-' + Date.now() + '-' + Math.round(Math.random() * 1E9) + '.png';
+    
+    // Resize and compress the stamp image
+    let processedBuffer;
+    try {
+      processedBuffer = await sharp(req.file.buffer)
+        .resize(400, null, { withoutEnlargement: true })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+    } catch (processError) {
+      console.error('Error processing stamp image:', processError);
+      processedBuffer = await compressImage(req.file.buffer, 'image/png');
+    }
+    
+    try {
+      const stampUrl = await saveImageToD1(doctorId, processedBuffer, filename, req.file.originalname, 'image/png', 'stamp', 'stamp');
+      res.json({ url: stampUrl });
+    } catch (d1Error) {
+      console.log('D1 image save failed, falling back to filesystem:', d1Error.message);
+      const filePath = path.join(uploadsDir, filename);
+      fs.writeFileSync(filePath, processedBuffer);
+      const stampUrl = `/uploads/doctors/${filename}`;
+      await updateUser(doctorId, { stamp: stampUrl });
+      res.json({ url: stampUrl });
+    }
+  } catch (error) {
+    console.error('Upload stamp error:', error);
     res.status(500).json({ message: error.message || 'Server error' });
   }
 });

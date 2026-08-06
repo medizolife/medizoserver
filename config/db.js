@@ -41,7 +41,11 @@ const connectDB = async () => {
         'ALTER TABLE users ADD COLUMN loginOtp TEXT DEFAULT "";',
         'ALTER TABLE users ADD COLUMN loginOtpExpires INTEGER DEFAULT 0;',
         'ALTER TABLE users ADD COLUMN resetOtp TEXT DEFAULT "";',
-        'ALTER TABLE users ADD COLUMN resetOtpExpires INTEGER DEFAULT 0;'
+        'ALTER TABLE users ADD COLUMN resetOtpExpires INTEGER DEFAULT 0;',
+        'ALTER TABLE users ADD COLUMN clinicLatitude REAL DEFAULT NULL;',
+        'ALTER TABLE users ADD COLUMN clinicLongitude REAL DEFAULT NULL;',
+        'ALTER TABLE users ADD COLUMN clinicLocationAccuracy REAL DEFAULT NULL;',
+        'ALTER TABLE users ADD COLUMN clinicPlaceName TEXT DEFAULT "";'
       ];
       for (const colSql of alterCols) {
         try {
