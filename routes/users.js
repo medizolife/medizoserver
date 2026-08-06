@@ -657,4 +657,45 @@ router.delete('/patients/:id', doctor, async (req, res) => {
   }
 });
 
+/**
+ * @route   DELETE /api/users/account
+ * @desc    Delete current user account and associated data
+ * @access  Private
+ */
+router.delete(['/account', '/me', '/profile'], auth, async (req, res) => {
+  try {
+    const { deleteUser } = require('../models/user');
+    const userId = req.user.id;
+    const user = await findUserById(userId);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Clean up images uploaded by user if Image model is available
+    try {
+      const Image = require('../models/ImageModel');
+      if (Image && Image.findByUser) {
+        const userImages = await Image.findByUser(userId);
+        for (const img of userImages) {
+          if (img.filename) {
+            await Image.deleteByFilename(img.filename);
+          }
+        }
+      }
+    } catch (imgErr) {
+      console.error('Notice: User image cleanup on delete:', imgErr.message);
+    }
+
+    await deleteUser(userId);
+    
+    res.json({
+      message: 'Account deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;
