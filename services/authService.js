@@ -205,6 +205,7 @@ const updateUserPhone = async (userId, phone) => {
  * Login or register user via Google OAuth
  * @param {string} credential Google ID token
  * @param {string} role User role (doctor/patient) - only used for new users
+ */
 const googleLogin = async (credential, role = null) => {
   try {
     // Verify Google token
