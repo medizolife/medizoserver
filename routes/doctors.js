@@ -186,11 +186,17 @@ router.put('/profile', doctor, async (req, res) => {
       qualifications
     });
     
-    if (!updatedDoctor) {
-      return res.status(404).json({ message: 'Doctor not found' });
+    let finalDoctor = updatedDoctor;
+    if (!finalDoctor) {
+      finalDoctor = await findUserById(doctorId);
     }
     
-    res.json(updatedDoctor);
+    if (!finalDoctor) {
+      return res.status(404).json({ message: 'Doctor profile not found' });
+    }
+    
+    const { password, ...doctorData } = finalDoctor;
+    res.json(doctorData);
   } catch (error) {
     console.error('Update doctor profile error:', error);
     res.status(500).json({ message: 'Server error' });

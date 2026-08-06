@@ -285,10 +285,15 @@ const updateUser = async (id, userData) => {
     const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = ? RETURNING *`;
     const { results } = await queryD1(sql, values);
 
-    return results.length > 0 ? sanitizeUser(parseUserRow(results[0])) : null;
+    if (results && results.length > 0) {
+      return sanitizeUser(parseUserRow(results[0]));
+    }
+
+    // Fallback if D1 RETURNING * does not return rows in HTTP API response
+    return await findUserById(id);
   } catch (error) {
     console.error('D1 updateUser error:', error);
-    return null;
+    return await findUserById(id);
   }
 };
 
