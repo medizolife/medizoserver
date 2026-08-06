@@ -16,13 +16,15 @@ router.post('/google', async (req, res) => {
     }
     
     // Authenticate or register user with Google
-    const { user, token, isNewUser } = await googleLogin(credential, role);
+    const result = await googleLogin(credential, role);
     
     res.json({ 
-      message: isNewUser ? 'Account created successfully' : 'Login successful',
-      user, 
-      token,
-      isNewUser
+      message: result.requiresRoleSelection ? 'Role selection required' : (result.isNewUser ? 'Account created successfully' : 'Login successful'),
+      user: result.user, 
+      token: result.token,
+      isNewUser: result.isNewUser,
+      requiresRoleSelection: result.requiresRoleSelection,
+      googleUserInfo: result.googleUserInfo
     });
   } catch (error) {
     console.error('Google auth error:', error);

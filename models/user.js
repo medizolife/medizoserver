@@ -334,7 +334,7 @@ const authenticateUser = async (email, password) => {
  * @param {string} role - User role (for new users)
  * @returns {Promise<{user: Object, token: string, isNewUser: boolean}>}
  */
-async function findOrCreateGoogleUser(googleUserInfo, role = 'patient') {
+async function findOrCreateGoogleUser(googleUserInfo, role = null) {
   const { googleId, email, firstName, lastName, picture } = googleUserInfo;
 
   try {
@@ -348,18 +348,29 @@ async function findOrCreateGoogleUser(googleUserInfo, role = 'patient') {
     let isNewUser = false;
 
     if (!user) {
-      // Create new user
+      // If user is new and no role was selected yet, request role selection before creating user
+      if (!role) {
+        return {
+          user: null,
+          token: null,
+          isNewUser: true,
+          requiresRoleSelection: true,
+          googleUserInfo: { googleId, email: email.toLowerCase(), firstName, lastName, picture }
+        };
+      }
+
+      // Create new user with selected role (doctor or patient)
       user = await createUser({
         googleId,
         email: email.toLowerCase(),
         firstName,
         lastName,
         picture,
-        role,
+        role: role === 'doctor' ? 'doctor' : 'patient',
         authProvider: 'google'
       });
       isNewUser = true;
-      console.log('Created new Google user:', email);
+      console.log(`Created new Google user with role [${user.role}]:`, email);
     } else if (!user.googleId) {
       // Link existing email account to Google
       user = await updateUser(user.id, {
@@ -378,7 +389,7 @@ async function findOrCreateGoogleUser(googleUserInfo, role = 'patient') {
       { expiresIn: '1d' }
     );
 
-    return { user: sanitizeUser(user), token, isNewUser };
+    return { user: sanitizeUser(user), token, isNewUser, requiresRoleSelection: false };
   } catch (error) {
     console.error('D1 findOrCreateGoogleUser error:', error);
     throw error;

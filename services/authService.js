@@ -205,17 +205,15 @@ const updateUserPhone = async (userId, phone) => {
  * Login or register user via Google OAuth
  * @param {string} credential Google ID token
  * @param {string} role User role (doctor/patient) - only used for new users
- * @returns {Object} User data and token
- */
-const googleLogin = async (credential, role = 'patient') => {
+const googleLogin = async (credential, role = null) => {
   try {
     // Verify Google token
     const googleUserInfo = await verifyGoogleToken(credential);
     
     // Find or create user
-    const { user, token, isNewUser } = await findOrCreateGoogleUser(googleUserInfo, role);
+    const result = await findOrCreateGoogleUser(googleUserInfo, role);
     
-    return { user, token, isNewUser };
+    return result;
   } catch (error) {
     throw error;
   }
