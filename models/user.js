@@ -234,6 +234,20 @@ const createUser = async (userData) => {
   }
 };
 
+const ALLOWED_USER_COLUMNS = new Set([
+  'firstName', 'lastName', 'email', 'password', 'googleId', 'picture',
+  'authProvider', 'role', 'status', 'pharmacyName', 'pharmacyAddress',
+  'specialization', 'licenseNumber', 'clinicAddress', 'experience',
+  'clinicLatitude', 'clinicLongitude', 'clinicLocationAccuracy', 'clinicPlaceName',
+  'qualifications', 'profileImage', 'clinicLogo', 'signature', 'stamp',
+  'clinicName', 'alternateEmail', 'secondaryPhone', 'fax', 'whatsapp',
+  'website', 'linkedin', 'twitter', 'facebook', 'instagram',
+  'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
+  'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
+  'medicalHistory', 'emergencyContact', 'digilockerVerified', 'digilockerProfile',
+  'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires', 'updatedAt'
+]);
+
 /**
  * Update a user
  * @param {string} id - User ID
@@ -257,6 +271,7 @@ const updateUser = async (id, userData) => {
     const skipFields = ['id', 'createdAt'];
     for (const [key, value] of Object.entries(data)) {
       if (skipFields.includes(key) || value === undefined) continue;
+      if (!ALLOWED_USER_COLUMNS.has(key)) continue;
       setClauses.push(`${key} = ?`);
       values.push(value);
     }
