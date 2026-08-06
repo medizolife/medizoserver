@@ -235,13 +235,13 @@ router.get('/images/:filename', async (req, res) => {
 });
 
 /**
- * Helper: Upload and save an image to D1
+ * Helper: Upload and save an image to D1 and update user profile
  */
 async function saveImageToD1(doctorId, compressedBuffer, filename, originalName, mimeType, imageType, userField) {
-  // Delete old image if exists
+  // Delete old image if exists in D1 table
   try {
     const doctorUser = await findUserById(doctorId);
-    if (doctorUser && doctorUser[userField]) {
+    if (doctorUser && doctorUser[userField] && !doctorUser[userField].startsWith('data:image/')) {
       const oldFilename = doctorUser[userField].split('/').pop();
       if (oldFilename) {
         await Image.deleteByFilename(oldFilename);
@@ -251,20 +251,25 @@ async function saveImageToD1(doctorId, compressedBuffer, filename, originalName,
     console.log('Notice: Old image delete attempt:', deleteError.message);
   }
   
-  // Save to D1
-  await Image.createImage({
-    filename,
-    originalName,
-    mimeType,
-    data: compressedBuffer,
-    size: compressedBuffer.length,
-    imageType,
-    uploadedBy: doctorId
-  });
+  // Save record to D1 images table
+  try {
+    await Image.createImage({
+      filename,
+      originalName,
+      mimeType,
+      data: compressedBuffer,
+      size: compressedBuffer.length,
+      imageType,
+      uploadedBy: doctorId
+    });
+  } catch (createErr) {
+    console.log('Notice: D1 createImage attempt:', createErr.message);
+  }
   
-  const imageUrl = `/api/doctors/images/${filename}`;
-  await updateUser(doctorId, { [userField]: imageUrl });
-  return imageUrl;
+  // Generate Data URI for zero-latency, 100% reliable rendering
+  const dataUri = `data:${mimeType};base64,${compressedBuffer.toString('base64')}`;
+  await updateUser(doctorId, { [userField]: dataUri });
+  return dataUri;
 }
 
 /**
