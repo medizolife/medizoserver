@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getUsers, createUser, updateUser, findUserById } = require('../models/user');
+const { getUsers, createUser, updateUser, findUserById, deleteUser } = require('../models/user');
 const { getPrescriptions } = require('../models/prescription');
 const { auth } = require('../middleware/auth');
 
@@ -173,6 +173,54 @@ router.put('/users/:id/status', adminOnly, async (req, res) => {
   } catch (error) {
     console.error('[Admin API] Update status error:', error);
     res.status(500).json({ success: false, message: 'Failed to update user status' });
+  }
+});
+
+/**
+ * @route   DELETE /api/admin/users/:id
+ * @desc    Permanently delete a user account (patient, doctor, or pharmacist)
+ * @access  Private (Admin)
+ */
+router.delete('/users/:id', adminOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`[Admin API] Requested deletion for user ID/Email: "${id}"`);
+
+    let existingUser = await findUserById(id);
+    if (!existingUser) {
+      const allUsers = await getUsers();
+      existingUser = allUsers.find(u => 
+        String(u.id) === String(id) || 
+        String(u._id) === String(id) || 
+        (u.email && u.email.toLowerCase() === String(id).toLowerCase())
+      );
+    }
+
+    if (!existingUser) {
+      console.warn(`[Admin API] Delete user failed: No account matching "${id}" found.`);
+      return res.status(404).json({ success: false, message: `User with ID "${id}" was not found.` });
+    }
+
+    if (existingUser.role === 'admin' || existingUser.email === 'admin@medizo.life') {
+      return res.status(400).json({ success: false, message: 'Cannot delete the system administrator account.' });
+    }
+
+    const userIdToDelete = existingUser.id || existingUser.email || id;
+    const success = await deleteUser(userIdToDelete);
+
+    if (!success) {
+      return res.status(500).json({ success: false, message: 'Failed to delete user from database' });
+    }
+
+    console.log(`[Admin API] Permanently deleted user ${userIdToDelete} (${existingUser.email})`);
+
+    res.json({
+      success: true,
+      message: `User ${existingUser.firstName || ''} ${existingUser.lastName || ''} (${existingUser.email}) deleted successfully`
+    });
+  } catch (error) {
+    console.error('[Admin API] Delete user error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to delete user' });
   }
 });
 

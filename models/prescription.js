@@ -236,6 +236,104 @@ const deletePrescription = async (id) => {
   }
 };
 
+/**
+ * Create an external / past prescription record
+ * @param {Object} data
+ * @returns {Promise<Object>}
+ */
+const createExternalPrescription = async (data) => {
+  try {
+    const crypto = require('crypto');
+    const id = data.id || crypto.randomBytes(16).toString('hex');
+    const now = new Date().toISOString();
+    const sql = `INSERT INTO external_prescriptions 
+      (id, patientId, uploadedBy, title, doctorName, recordDate, notes, fileUrl, fileType, fileSize, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    await queryD1(sql, [
+      id,
+      data.patientId,
+      data.uploadedBy,
+      data.title || 'Past Medical Record',
+      data.doctorName || '',
+      data.recordDate || '',
+      data.notes || '',
+      data.fileUrl,
+      data.fileType || 'image',
+      data.fileSize || 0,
+      now,
+      now
+    ]);
+    return {
+      id,
+      patientId: data.patientId,
+      uploadedBy: data.uploadedBy,
+      title: data.title || 'Past Medical Record',
+      doctorName: data.doctorName || '',
+      recordDate: data.recordDate || '',
+      notes: data.notes || '',
+      fileUrl: data.fileUrl,
+      fileType: data.fileType || 'image',
+      fileSize: data.fileSize || 0,
+      createdAt: now,
+      updatedAt: now
+    };
+  } catch (error) {
+    console.error('D1 createExternalPrescription error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Find external prescriptions by patient ID
+ * @param {string} patientId
+ * @returns {Promise<Array>}
+ */
+const findExternalPrescriptionsByPatientId = async (patientId) => {
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM external_prescriptions WHERE patientId = ? ORDER BY createdAt DESC',
+      [patientId]
+    );
+    return results || [];
+  } catch (error) {
+    console.error('D1 findExternalPrescriptionsByPatientId error:', error);
+    return [];
+  }
+};
+
+/**
+ * Find external prescription by ID
+ * @param {string} id
+ * @returns {Promise<Object|null>}
+ */
+const findExternalPrescriptionById = async (id) => {
+  try {
+    const { results } = await queryD1(
+      'SELECT * FROM external_prescriptions WHERE id = ? LIMIT 1',
+      [id]
+    );
+    return results[0] || null;
+  } catch (error) {
+    console.error('D1 findExternalPrescriptionById error:', error);
+    return null;
+  }
+};
+
+/**
+ * Delete external prescription
+ * @param {string} id
+ * @returns {Promise<boolean>}
+ */
+const deleteExternalPrescription = async (id) => {
+  try {
+    await queryD1('DELETE FROM external_prescriptions WHERE id = ?', [id]);
+    return true;
+  } catch (error) {
+    console.error('D1 deleteExternalPrescription error:', error);
+    return false;
+  }
+};
+
 module.exports = {
   getPrescriptions,
   getPrescriptionsSync,
@@ -246,5 +344,9 @@ module.exports = {
   createPrescription,
   updatePrescription,
   deletePrescription,
+  createExternalPrescription,
+  findExternalPrescriptionsByPatientId,
+  findExternalPrescriptionById,
+  deleteExternalPrescription,
   isMongoConnected
 };

@@ -57,6 +57,26 @@ const connectDB = async () => {
         }
       }
 
+      // Ensure external_prescriptions table exists
+      try {
+        await execRawSQL(`CREATE TABLE IF NOT EXISTS external_prescriptions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          patientId TEXT NOT NULL,
+          uploadedBy TEXT NOT NULL,
+          title TEXT NOT NULL,
+          doctorName TEXT DEFAULT "",
+          recordDate TEXT DEFAULT "",
+          notes TEXT DEFAULT "",
+          fileUrl TEXT NOT NULL,
+          fileType TEXT DEFAULT "image",
+          fileSize INTEGER DEFAULT 0,
+          createdAt TEXT DEFAULT (datetime('now')),
+          updatedAt TEXT DEFAULT (datetime('now'))
+        );`);
+      } catch (e) {
+        // Table exists, safe to ignore
+      }
+
       console.log('D1 schema migrations completed.');
     }
 

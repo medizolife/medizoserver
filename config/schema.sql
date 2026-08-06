@@ -202,3 +202,26 @@ CREATE TABLE IF NOT EXISTS images (
 CREATE INDEX IF NOT EXISTS idx_images_filename ON images(filename);
 CREATE INDEX IF NOT EXISTS idx_images_uploadedBy ON images(uploadedBy);
 CREATE INDEX IF NOT EXISTS idx_images_uploadedBy_type ON images(uploadedBy, imageType);
+
+
+-- ============================================================
+-- EXTERNAL PRESCRIPTIONS TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS external_prescriptions (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  patientId TEXT NOT NULL,
+  uploadedBy TEXT NOT NULL,
+  title TEXT NOT NULL,
+  doctorName TEXT DEFAULT '',
+  recordDate TEXT DEFAULT '',
+  notes TEXT DEFAULT '',
+  fileUrl TEXT NOT NULL,
+  fileType TEXT DEFAULT 'image',
+  fileSize INTEGER DEFAULT 0,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ext_rx_patientId ON external_prescriptions(patientId);
+CREATE INDEX IF NOT EXISTS idx_ext_rx_uploadedBy ON external_prescriptions(uploadedBy);
+

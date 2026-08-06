@@ -139,12 +139,23 @@ const findUserByMobile = async (mobileNumber) => {
  */
 const findUserById = async (id) => {
   if (!id) return null;
+  const cleanId = String(id).trim();
   try {
     const { results } = await queryD1(
-      'SELECT * FROM users WHERE id = ? LIMIT 1',
-      [id]
+      'SELECT * FROM users WHERE id = ? OR email = ? LIMIT 1',
+      [cleanId, cleanId.toLowerCase()]
     );
-    return results.length > 0 ? sanitizeUser(parseUserRow(results[0])) : null;
+    if (results && results.length > 0) {
+      return sanitizeUser(parseUserRow(results[0]));
+    }
+    // Fallback: search across all users
+    const allUsers = await getUsers();
+    const found = allUsers.find(u => 
+      String(u.id) === cleanId || 
+      String(u._id) === cleanId || 
+      (u.email && u.email.toLowerCase() === cleanId.toLowerCase())
+    );
+    return found || null;
   } catch (error) {
     console.error('D1 findUserById error:', error);
     return null;
@@ -303,9 +314,19 @@ const updateUser = async (id, userData) => {
  * @returns {Promise<boolean>}
  */
 const deleteUser = async (id) => {
+  if (!id) return false;
+  const cleanId = String(id).trim();
   try {
-    const { meta } = await queryD1('DELETE FROM users WHERE id = ?', [id]);
-    return (meta?.changes || 0) > 0;
+    const res = await queryD1(
+      'DELETE FROM users WHERE id = ? OR email = ?',
+      [cleanId, cleanId.toLowerCase()]
+    );
+    if (res?.success || (res?.meta?.changes || 0) > 0) {
+      return true;
+    }
+    // Verify if user is removed from database
+    const check = await findUserById(cleanId);
+    return !check;
   } catch (error) {
     console.error('D1 deleteUser error:', error);
     return false;
