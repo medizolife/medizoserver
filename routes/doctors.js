@@ -251,25 +251,20 @@ async function saveImageToD1(doctorId, compressedBuffer, filename, originalName,
     console.log('Notice: Old image delete attempt:', deleteError.message);
   }
   
-  // Save record to D1 images table
-  try {
-    await Image.createImage({
-      filename,
-      originalName,
-      mimeType,
-      data: compressedBuffer,
-      size: compressedBuffer.length,
-      imageType,
-      uploadedBy: doctorId
-    });
-  } catch (createErr) {
-    console.log('Notice: D1 createImage attempt:', createErr.message);
-  }
+  // Save image binary data in D1 database
+  await Image.createImage({
+    filename,
+    originalName,
+    mimeType,
+    data: compressedBuffer,
+    size: compressedBuffer.length,
+    imageType,
+    uploadedBy: doctorId
+  });
   
-  // Generate Data URI for zero-latency, 100% reliable rendering
-  const dataUri = `data:${mimeType};base64,${compressedBuffer.toString('base64')}`;
-  await updateUser(doctorId, { [userField]: dataUri });
-  return dataUri;
+  const imageUrl = `/api/doctors/images/${filename}`;
+  await updateUser(doctorId, { [userField]: imageUrl });
+  return imageUrl;
 }
 
 /**
