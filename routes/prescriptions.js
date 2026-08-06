@@ -346,6 +346,49 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/prescriptions/public/:id
+ * @desc    Get prescription by ID (Public shared view - no authentication required)
+ * @access  Public
+ */
+router.get('/public/:id', async (req, res) => {
+  try {
+    const prescriptionId = req.params.id;
+    const prescription = await findPrescriptionById(prescriptionId);
+    
+    if (!prescription) {
+      return res.status(404).json({ message: 'Prescription not found' });
+    }
+
+    let patient = null;
+    let doctorUser = null;
+    if (prescription.patientId) {
+      patient = await findUserById(prescription.patientId);
+    }
+    if (prescription.doctorId) {
+      doctorUser = await findUserById(prescription.doctorId);
+    }
+
+    const enhanced = {
+      ...prescription,
+      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Patient'),
+      patientDOB: patient ? patient.dateOfBirth : prescription.patientDOB,
+      patientGender: patient ? patient.gender : prescription.patientGender,
+      doctorName: doctorUser ? `Dr. ${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() : (prescription.doctorName || 'Doctor'),
+      doctorSpecialization: doctorUser ? doctorUser.specialization : (prescription.doctorSpecialization || 'General Physician'),
+      doctorLicenseNumber: doctorUser ? doctorUser.licenseNumber : prescription.doctorLicenseNumber,
+      doctorClinicName: doctorUser ? doctorUser.clinicName : prescription.doctorClinicName,
+      doctorStamp: doctorUser ? doctorUser.stamp : prescription.doctorStamp,
+      doctorSignature: doctorUser ? doctorUser.signature : prescription.doctorSignature,
+    };
+    
+    res.json(enhanced);
+  } catch (error) {
+    console.error('Get public prescription error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
  * @route   POST /api/prescriptions
  * @desc    Create a new prescription
  * @access  Private (Doctor only)
@@ -602,6 +645,58 @@ router.delete('/:id', doctor, async (req, res) => {
   } catch (error) {
     console.error('Delete prescription error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+/**
+ * @route   GET /api/prescriptions/public/:id/download
+ * @desc    Download prescription PDF (Public shared view - no authentication required)
+ * @access  Public
+ */
+router.get(['/public/:id/download', '/public/:id/pdf'], async (req, res) => {
+  try {
+    const prescriptionId = req.params.id;
+    const prescription = await findPrescriptionById(prescriptionId);
+    
+    if (!prescription) {
+      return res.status(404).json({ message: 'Prescription not found' });
+    }
+    
+    let patient = await findUserById(prescription.patientId);
+    let doctorUser = await findUserById(prescription.doctorId);
+    
+    if (!patient) {
+      patient = {
+        id: prescription.patientId || 'patient-id',
+        firstName: prescription.patientName ? prescription.patientName.split(' ')[0] : 'Patient',
+        lastName: prescription.patientName ? prescription.patientName.split(' ').slice(1).join(' ') : '',
+        email: prescription.patientEmail || '',
+        dateOfBirth: prescription.patientDOB || '',
+        gender: prescription.patientGender || '',
+        phone: prescription.patientPhone || prescription.contactNumber || ''
+      };
+    }
+    
+    if (!doctorUser) {
+      doctorUser = {
+        id: prescription.doctorId || 'doctor-id',
+        firstName: prescription.doctorName ? prescription.doctorName.split(' ')[0] : 'Doctor',
+        lastName: prescription.doctorName ? prescription.doctorName.split(' ').slice(1).join(' ') : '',
+        specialization: prescription.doctorSpecialization || 'General Practitioner',
+        licenseNumber: prescription.doctorLicenseNumber || '',
+        stamp: prescription.doctorStamp || '',
+        signature: prescription.doctorSignature || ''
+      };
+    }
+    
+    const { generatePrescriptionPDF } = require('../services/pdfGenerator');
+    await generatePrescriptionPDF(res, prescriptionId, prescription, patient, doctorUser);
+
+  } catch (error) {
+    console.error('Public PDF download error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Server error generating PDF' });
+    }
   }
 });
 
