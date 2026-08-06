@@ -41,13 +41,23 @@ async function createImage(imageData) {
     const base64Data = Buffer.isBuffer(data) ? data.toString('base64') : data;
 
     const sql = `INSERT INTO images (filename, originalName, mimeType, data, size, imageType, uploadedBy)
-      VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`;
+      VALUES (?, ?, ?, ?, ?, ?, ?)`;
     const { results } = await queryD1(sql, [
       filename, originalName, mimeType, base64Data, size, imageType || 'other', uploadedBy
     ]);
 
-    if (results.length === 0) throw new Error('Failed to save image');
-    return results[0];
+    if (results && results.length > 0) {
+      return results[0];
+    }
+    
+    return {
+      filename,
+      originalName,
+      mimeType,
+      size,
+      imageType: imageType || 'other',
+      uploadedBy
+    };
   } catch (error) {
     console.error('D1 createImage error:', error);
     throw error;

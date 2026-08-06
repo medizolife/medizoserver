@@ -239,10 +239,16 @@ router.get('/images/:filename', async (req, res) => {
  */
 async function saveImageToD1(doctorId, compressedBuffer, filename, originalName, mimeType, imageType, userField) {
   // Delete old image if exists
-  const doctorUser = await findUserById(doctorId);
-  if (doctorUser && doctorUser[userField]) {
-    const oldFilename = doctorUser[userField].split('/').pop();
-    await Image.deleteByFilename(oldFilename);
+  try {
+    const doctorUser = await findUserById(doctorId);
+    if (doctorUser && doctorUser[userField]) {
+      const oldFilename = doctorUser[userField].split('/').pop();
+      if (oldFilename) {
+        await Image.deleteByFilename(oldFilename);
+      }
+    }
+  } catch (deleteError) {
+    console.log('Notice: Old image delete attempt:', deleteError.message);
   }
   
   // Save to D1
