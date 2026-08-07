@@ -137,6 +137,7 @@ const createPrescription = async (prescriptionData) => {
     const allowedFields = [
       'doctorId', 'doctorName', 'doctorSpecialization', 'doctorLicenseNumber',
       'patientId', 'patientName', 'patientEmail', 'patientAge', 'patientGender',
+      'accountId', 'patientDisplayId',
       'vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
       'currentMedications', 'pastSurgicalHistory',
       'diagnosis', 'medication', 'dosage', 'frequency', 'duration', 'instructions', 'notes',

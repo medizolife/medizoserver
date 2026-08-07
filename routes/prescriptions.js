@@ -21,6 +21,7 @@ const {
 const { findUserById } = require('../models/user');
 const { auth, doctor } = require('../middleware/auth');
 const { sendPrescriptionNotification } = require('../services/email');
+const { getFamilyProfileById } = require('../models/familyProfile');
 
 // Configure Multer for external record uploads
 const recordsDir = process.env.VERCEL 
@@ -94,14 +95,20 @@ router.get('/', auth, async (req, res) => {
           return {
             ...prescription,
             patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
-            patientEmail: patient ? patient.email || 'N/A' : 'N/A'
+            patientEmail: patient ? patient.email || 'N/A' : 'N/A',
+            patientMobile: patient ? (patient.mobile || patient.phone || patient.contactNumber || 'N/A') : 'N/A',
+            patientPhone: patient ? (patient.phone || patient.contactNumber || patient.mobile || 'N/A') : 'N/A',
+            contactNumber: patient ? (patient.contactNumber || patient.phone || patient.mobile || 'N/A') : 'N/A'
           };
         } catch (err) {
           console.error('Error enhancing prescription with patient info:', err);
           return {
             ...prescription,
             patientName: 'Unknown Patient',
-            patientEmail: 'N/A'
+            patientEmail: 'N/A',
+            patientMobile: 'N/A',
+            patientPhone: 'N/A',
+            contactNumber: 'N/A'
           };
         }
       }));
@@ -173,6 +180,9 @@ router.get('/', auth, async (req, res) => {
             ...prescription,
             patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
             patientEmail: patient ? patient.email || 'N/A' : 'N/A',
+            patientMobile: patient ? (patient.mobile || patient.phone || patient.contactNumber || 'N/A') : 'N/A',
+            patientPhone: patient ? (patient.phone || patient.contactNumber || patient.mobile || 'N/A') : 'N/A',
+            contactNumber: patient ? (patient.contactNumber || patient.phone || patient.mobile || 'N/A') : 'N/A',
             doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
             doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician'
           };
@@ -448,6 +458,9 @@ router.post('/', doctor, async (req, res) => {
     const { 
       patientId,
       patientEmail,
+      familyProfileId,
+      accountId: reqAccountId,
+      patientDisplayId: reqDisplayId,
       // New comprehensive fields
       vitalSigns,
       presentingComplaints,
@@ -507,12 +520,48 @@ router.post('/', doctor, async (req, res) => {
         }))
       });
     }
+
+    // Resolve family profile if provided — use profile data for patient info on the prescription
+    let profilePatientName = `${patient.firstName} ${patient.lastName}`.trim();
+    let profileAge = '';
+    let profileGender = patient.gender || '';
+    let profileDisplayId = reqDisplayId || '';
+    let resolvedAccountId = reqAccountId || patient.id;
+    let resolvedPatientId = patient.id;
+
+    if (familyProfileId) {
+      try {
+        const profile = await getFamilyProfileById(familyProfileId);
+        if (profile && profile.accountId === patient.id) {
+          profilePatientName = `${profile.firstName} ${profile.lastName}`.trim();
+          profileGender = profile.gender || '';
+          profileDisplayId = profile.patientDisplayId || '';
+          resolvedAccountId = profile.accountId;
+          // Use profile id as the patientId for unique identification
+          resolvedPatientId = profile.id;
+          if (profile.dateOfBirth) {
+            const dob = new Date(profile.dateOfBirth);
+            const ageDiff = Date.now() - dob.getTime();
+            const ageDate = new Date(ageDiff);
+            profileAge = String(Math.abs(ageDate.getUTCFullYear() - 1970));
+          }
+          console.log('Using family profile for prescription:', profile.patientDisplayId, profilePatientName);
+        }
+      } catch (profileErr) {
+        console.error('Failed to resolve family profile, using account data:', profileErr.message);
+      }
+    }
     
     // Create prescription with comprehensive data
     const prescription = await createPrescription({
       doctorId,
-      patientId: patient.id,
+      patientId: resolvedPatientId,
+      patientName: profilePatientName,
       patientEmail: patient.email,
+      patientAge: profileAge,
+      patientGender: profileGender,
+      accountId: resolvedAccountId,
+      patientDisplayId: profileDisplayId,
       // Vital signs
       vitalSigns: vitalSigns || {},
       // Clinical information

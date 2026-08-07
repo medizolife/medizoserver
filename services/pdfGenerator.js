@@ -131,7 +131,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   }
   const pGender    = patient.gender ? patient.gender.charAt(0).toUpperCase() + patient.gender.slice(1) : '';
   const pAgeGender = [pAge, pGender].filter(Boolean).join(' / ');
-  const pId        = patient.id ? `PT-${String(patient.id).slice(-6)}` : '';
+  const pId        = prescription.patientDisplayId || (patient.id ? `PT-${String(patient.id).slice(-6)}` : '');
   const pPhone     = patient.contactNumber || patient.phone || '';
   const pEmail     = patient.email || '';
   const pAddr      = patient.address || '';
@@ -242,39 +242,40 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   doc.roundedRect(M, y, CW, hdrH, 4).fillAndStroke(C.hdrBg, C.primary);
   doc.lineWidth(1.5);
 
-  const docFirstName = (doctor.firstName || '').trim();
-  const docLastName = (doctor.lastName || '').trim();
-  const doctorDisplayName = docFirstName.match(/^dr\.?\s+/i)
-    ? `${docFirstName} ${docLastName}`.trim()
-    : `Dr. ${docFirstName} ${docLastName}`.trim();
+  const docFirstName = (doctor.firstName || prescription.doctorName?.split(' ')[0] || '').trim();
+  const docLastName = (doctor.lastName || prescription.doctorName?.split(' ').slice(1).join(' ') || '').trim();
+  let doctorDisplayName = `${docFirstName} ${docLastName}`.trim() || prescription.doctorName || 'Attending Physician';
+  if (!doctorDisplayName.match(/^dr\.?\s+/i)) {
+    doctorDisplayName = `Dr. ${doctorDisplayName}`;
+  }
+
+  const docSpecialization = doctor.specialization || doctor.doctorSpecialization || prescription.doctorSpecialization || prescription.specialization || 'General Physician';
+  const docRegNo = doctor.registrationNumber || doctor.licenseNumber || doctor.doctorLicenseNumber || prescription.doctorRegistrationNumber || prescription.doctorLicenseNumber || prescription.registrationNumber || '';
+  const drPhone = doctor.contactNumber || doctor.phone || doctor.doctorPhone || prescription.doctorPhone || prescription.contactNumber || '';
+  const docAddress = doctor.address || doctor.clinicAddress || prescription.doctorAddress || prescription.clinicAddress || '';
 
   doc.font('Helvetica-Bold').fontSize(15).fillColor(C.primary)
     .text(doctorDisplayName, M + 10, y + 8, { width: CW * 0.55 });
 
   let hY = y + 26;
-  if (doctor.specialization) {
+  if (docSpecialization) {
     doc.font('Helvetica-Oblique').fontSize(9.5).fillColor(C.text)
-      .text(doctor.specialization, M + 10, hY, { width: CW * 0.55 });
+      .text(docSpecialization, M + 10, hY, { width: CW * 0.55 });
     hY += 13;
   }
-  if (doctor.registrationNumber) {
+  if (docRegNo) {
     doc.font('Helvetica').fontSize(9).fillColor(C.text)
-      .text(`Reg. No: ${doctor.registrationNumber}`, M + 10, hY);
+      .text(`Reg. No: ${docRegNo}`, M + 10, hY);
     hY += 12;
   }
-  const drPhone = doctor.contactNumber || doctor.phone || '';
-  const drEmail = doctor.email || '';
-  if (drPhone || drEmail) {
-    const parts = [];
-    if (drPhone) parts.push(`Phone: ${drPhone}`);
-    if (drEmail) parts.push(`Email: ${drEmail}`);
+  if (drPhone) {
     doc.font('Helvetica').fontSize(9).fillColor(C.text)
-      .text(parts.join('      '), M + 10, hY, { width: CW * 0.6 });
+      .text(`Phone: ${drPhone}`, M + 10, hY, { width: CW * 0.6 });
     hY += 12;
   }
-  if (doctor.address) {
+  if (docAddress) {
     doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-      .text(`Address: ${doctor.address}`, M + 10, hY, { width: CW * 0.6 });
+      .text(`Address: ${docAddress}`, M + 10, hY, { width: CW * 0.6 });
   }
 
   // Right side – clinic logo (or clinic name fallback)
@@ -345,7 +346,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     let rows = 2; // Name + Age/Gender always shown
     if (pWeight || pHeight) rows++;
     if (pAddr) rows++;
-    if (pPhone || pEmail) rows++;
+    if (pPhone) rows++;
     if (pEmergency) rows++;
     const bodyH = rows * 15 + 8;
     const boxH = 20 + bodyH; // title bar + body
@@ -368,7 +369,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     bv('Age/Gender:', pAgeGender, L1, y); if (pBlood) bv('Blood Type:', pBlood, L2, y); y += 15;
     if (pWeight || pHeight) { if (pWeight) bv('Weight:', pWeight, L1, y); if (pHeight) bv('Height:', pHeight, L2, y); y += 15; }
     if (pAddr) { bv('Address:', pAddr, L1, y); y += 15; }
-    if (pPhone || pEmail) { if (pPhone) bv('Contact:', pPhone, L1, y); if (pEmail) bv('Email:', pEmail, L2, y); y += 15; }
+    if (pPhone) { bv('Contact:', pPhone, L1, y); y += 15; }
     if (pEmergency) { bv('Emergency Contact:', pEmergency, L1, y); y += 15; }
 
     y = startY + boxH + 8;
@@ -811,11 +812,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
         .text(doctorDisplayName, M, sigY + 72);
       siy = sigY + 86;
-      if (doctor.specialization) {
-        const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
+      if (docSpecialization) {
+        const spec = docSpecialization.length > 35 ? docSpecialization.substring(0, 35) + '...' : docSpecialization;
         doc.font('Helvetica').fontSize(9).text(spec, M, siy); siy += 12;
       }
-      if (doctor.registrationNumber) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${doctor.registrationNumber}`, M, siy); siy += 12; }
+      if (docRegNo) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${docRegNo}`, M, siy); siy += 12; }
       doc.font('Helvetica').fontSize(9).text(`Date: ${fDate}`, M, siy);
     } catch (sigErr) {
       console.error('Signature render error:', sigErr);
@@ -823,11 +824,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
         .text(doctorDisplayName, M, sigY + 32);
       siy = sigY + 54;
-      if (doctor.specialization) {
-        const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
+      if (docSpecialization) {
+        const spec = docSpecialization.length > 35 ? docSpecialization.substring(0, 35) + '...' : docSpecialization;
         doc.font('Helvetica').fontSize(9).text(spec, M, siy); siy += 12;
       }
-      if (doctor.registrationNumber) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${doctor.registrationNumber}`, M, siy); siy += 12; }
+      if (docRegNo) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${docRegNo}`, M, siy); siy += 12; }
       doc.font('Helvetica').fontSize(9).text(`Date: ${fDate}`, M, siy);
     }
   } else {
@@ -835,11 +836,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
       .text(doctorDisplayName, M, sigY + 32);
     siy = sigY + 54;
-    if (doctor.specialization) {
-      const spec = doctor.specialization.length > 35 ? doctor.specialization.substring(0, 35) + '...' : doctor.specialization;
+    if (docSpecialization) {
+      const spec = docSpecialization.length > 35 ? docSpecialization.substring(0, 35) + '...' : docSpecialization;
       doc.font('Helvetica').fontSize(9).text(spec, M, siy); siy += 12;
     }
-    if (doctor.registrationNumber) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${doctor.registrationNumber}`, M, siy); siy += 12; }
+    if (docRegNo) { doc.font('Helvetica').fontSize(9).text(`Reg. No: ${docRegNo}`, M, siy); siy += 12; }
     doc.font('Helvetica').fontSize(9).text(`Date: ${fDate}`, M, siy);
   }
 

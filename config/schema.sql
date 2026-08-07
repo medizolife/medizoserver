@@ -225,3 +225,53 @@ CREATE TABLE IF NOT EXISTS external_prescriptions (
 CREATE INDEX IF NOT EXISTS idx_ext_rx_patientId ON external_prescriptions(patientId);
 CREATE INDEX IF NOT EXISTS idx_ext_rx_uploadedBy ON external_prescriptions(uploadedBy);
 
+
+-- ============================================================
+-- FAMILY PROFILES TABLE
+-- ============================================================
+-- Each patient account can have multiple profiles (self + dependents).
+-- The account holder's own data is profile index 0 ('self').
+-- Each profile gets a unique patientDisplayId: PT-{accountId-last6}[NN]
+CREATE TABLE IF NOT EXISTS family_profiles (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+
+  -- Link to account holder (references users.id)
+  accountId TEXT NOT NULL,
+  profileIndex INTEGER NOT NULL,           -- 0=self, 1..N=dependents
+
+  -- Relationship to account holder
+  relationship TEXT NOT NULL DEFAULT 'self', -- 'self','spouse','parent','child','sibling','other'
+
+  -- Profile-specific patient data
+  firstName TEXT NOT NULL,
+  lastName TEXT NOT NULL,
+  dateOfBirth TEXT DEFAULT '',
+  gender TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
+  address TEXT DEFAULT '',
+  bloodType TEXT DEFAULT '',
+
+  -- Medical data (JSON, same structure as users table)
+  allergies TEXT DEFAULT '{"environmental":[],"food":[],"drugs":[],"other":[]}',
+  diseaseHistory TEXT DEFAULT '[]',
+  chronicConditions TEXT DEFAULT '[]',
+  medicalHistory TEXT DEFAULT '',
+  emergencyContact TEXT DEFAULT '{"name":"","relationship":"","phone":""}',
+
+  -- Generated patient display ID: e.g. "PT-A1B2C3[00]"
+  patientDisplayId TEXT DEFAULT '',
+
+  -- Status (soft-delete)
+  isActive INTEGER DEFAULT 1,
+
+  -- Timestamps
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+
+  UNIQUE(accountId, profileIndex)
+);
+
+CREATE INDEX IF NOT EXISTS idx_family_profiles_accountId ON family_profiles(accountId);
+CREATE INDEX IF NOT EXISTS idx_family_profiles_displayId ON family_profiles(patientDisplayId);
+CREATE INDEX IF NOT EXISTS idx_family_profiles_active ON family_profiles(accountId, isActive);
+

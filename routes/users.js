@@ -3,9 +3,10 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { getUsers, findUserById, updateUser, createUser } = require('../models/user');
+const { getUsers, findUserById, findUserByEmail, findUserByMobile, updateUser, createUser } = require('../models/user');
 const { findPrescriptionsByDoctorId } = require('../models/prescription');
 const { auth, doctor, patient } = require('../middleware/auth');
+const { getFamilyProfilesByAccountId, getFamilyProfileById, getProfileByDisplayId } = require('../models/familyProfile');
 
 // Configure multer for profile picture uploads
 const storage = multer.memoryStorage(); // Use memory storage for serverless compatibility
@@ -234,9 +235,17 @@ router.get('/patients/my-patients', doctor, async (req, res) => {
     // Get unique patient IDs from prescriptions with their latest prescription date
     const patientLastActivity = new Map();
     for (const p of prescriptions) {
-      const pid = p.patientId?.toString() || p.patientId;
+      // Use accountId if prescription was created for a family profile, or fallback to patientId
+      let pid = p.accountId || p.patientId?.toString() || p.patientId;
+      // If pid is a family profile ID, look up parent accountId
+      if (pid) {
+        const familyProfile = await getFamilyProfileById(pid);
+        if (familyProfile && familyProfile.accountId) {
+          pid = familyProfile.accountId;
+        }
+      }
       const pDate = new Date(p.updatedAt || p.createdAt || 0);
-      if (!patientLastActivity.has(pid) || pDate > patientLastActivity.get(pid)) {
+      if (pid && (!patientLastActivity.has(pid) || pDate > patientLastActivity.get(pid))) {
         patientLastActivity.set(pid, pDate);
       }
     }
@@ -254,10 +263,11 @@ router.get('/patients/my-patients', doctor, async (req, res) => {
       const patient = await findUserById(patientId);
       if (patient && patient.role === 'patient') {
         const { password, ...patientData } = patient;
+        const familyProfiles = await getFamilyProfilesByAccountId(patientId);
         // Use latest prescription date, or updatedAt, or createdAt as lastActivity
         const lastPrescriptionDate = patientLastActivity.get(patientId);
         const lastActivity = lastPrescriptionDate || new Date(patient.updatedAt || patient.createdAt || 0);
-        patients.push({ ...patientData, lastActivity: lastActivity.toISOString() });
+        patients.push({ ...patientData, familyProfiles, lastActivity: lastActivity.toISOString() });
       }
     }
 
@@ -284,24 +294,49 @@ router.get('/patients/my-patients', doctor, async (req, res) => {
 router.get('/patients/lookup/:patientId', doctor, async (req, res) => {
   console.log('GET /patients/lookup/:patientId endpoint hit');
   try {
-    const { patientId } = req.params;
+    const patientId = req.params.patientId;
+    let patient = await findUserById(patientId);
     
-    const patient = await findUserById(patientId);
+    // Check if searched by family profile display ID (e.g. PT-A1B2C3[01]) or profile ID
+    let matchedProfile = null;
+    if (!patient) {
+      matchedProfile = await getProfileByDisplayId(patientId);
+      if (!matchedProfile) {
+        matchedProfile = await getFamilyProfileById(patientId);
+      }
+      if (matchedProfile) {
+        patient = await findUserById(matchedProfile.accountId);
+      }
+    }
+
+    if (!patient && patientId.includes('@')) {
+      patient = await findUserByEmail(patientId);
+    }
+    if (!patient) {
+      patient = await findUserByMobile(patientId);
+    }
     
     if (!patient) {
-      return res.status(404).json({ message: 'Patient not found. Please check the Patient ID.' });
+      return res.status(404).json({ message: 'Patient not found. Please check the Patient ID, Mobile number, or Email.' });
     }
     
     if (patient.role !== 'patient') {
       return res.status(400).json({ message: 'The provided ID does not belong to a patient.' });
     }
     
+    // Fetch family profiles for the account
+    const familyProfiles = await getFamilyProfilesByAccountId(patient.id);
+
     // Return patient data without password
     const { password, ...patientData } = patient;
     
     res.json({
       message: 'Patient found',
-      patient: patientData
+      patient: {
+        ...patientData,
+        familyProfiles,
+        selectedProfile: matchedProfile
+      }
     });
   } catch (error) {
     console.error('Lookup patient error:', error);

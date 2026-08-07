@@ -80,6 +80,55 @@ const connectDB = async () => {
       console.log('D1 schema migrations completed.');
     }
 
+    // Ensure family_profiles table and prescription columns exist
+    const familyMigrations = [
+      // Add accountId and patientDisplayId to prescriptions
+      'ALTER TABLE prescriptions ADD COLUMN accountId TEXT DEFAULT "";',
+      'ALTER TABLE prescriptions ADD COLUMN patientDisplayId TEXT DEFAULT "";',
+    ];
+    for (const migSql of familyMigrations) {
+      try {
+        await execRawSQL(migSql);
+      } catch (e) {
+        // Column already exists, safe to ignore
+      }
+    }
+
+    // Auto-create self-profiles for existing patients who don't have one
+    try {
+      await execRawSQL(`
+        INSERT OR IGNORE INTO family_profiles (id, accountId, profileIndex, relationship, firstName, lastName, dateOfBirth, gender, phone, address, bloodType, allergies, diseaseHistory, chronicConditions, medicalHistory, emergencyContact, patientDisplayId, isActive)
+        SELECT 
+          lower(hex(randomblob(16))),
+          u.id,
+          0,
+          'self',
+          u.firstName,
+          u.lastName,
+          COALESCE(u.dateOfBirth, ''),
+          COALESCE(u.gender, ''),
+          COALESCE(u.phone, u.contactNumber, ''),
+          COALESCE(u.address, ''),
+          COALESCE(u.bloodType, ''),
+          COALESCE(u.allergies, '{"environmental":[],"food":[],"drugs":[],"other":[]}'),
+          COALESCE(u.diseaseHistory, '[]'),
+          COALESCE(u.chronicConditions, '[]'),
+          COALESCE(u.medicalHistory, ''),
+          COALESCE(u.emergencyContact, '{"name":"","relationship":"","phone":""}'),
+          'PT-' || UPPER(SUBSTR(u.id, -6)) || '[00]',
+          1
+        FROM users u
+        WHERE u.role = 'patient'
+        AND u.id NOT IN (SELECT accountId FROM family_profiles WHERE profileIndex = 0)
+      `);
+      console.log('Family self-profiles migration completed.');
+    } catch (e) {
+      // Table may not exist yet on first run — it will be created by schema.sql
+      if (!e.message?.includes('no such table')) {
+        console.error('Family self-profiles migration notice:', e.message);
+      }
+    }
+
     isConnected = true;
     console.log('Cloudflare D1 connected successfully.');
     return true;
