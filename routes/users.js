@@ -698,4 +698,38 @@ router.delete(['/account', '/me', '/profile'], auth, async (req, res) => {
   }
 });
 
+/**
+ * @route   PUT /api/users/change-role
+ * @desc    Change user account role (Doctor, Patient, Pharmacist)
+ * @access  Private
+ */
+router.put('/change-role', auth, async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!role || !['doctor', 'patient', 'pharmacist'].includes(role)) {
+      return res.status(400).json({ message: 'Valid role is required (doctor, patient, or pharmacist)' });
+    }
+
+    const updatedUser = await updateUser(req.user.id, { role });
+    
+    // Generate new JWT token with updated role
+    const jwt = require('jsonwebtoken');
+    const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+    const token = jwt.sign(
+      { id: updatedUser.id, role: updatedUser.role },
+      jwtSecret,
+      { expiresIn: '1d' }
+    );
+
+    res.json({
+      message: `Account role updated to ${role} successfully`,
+      user: updatedUser,
+      token
+    });
+  } catch (error) {
+    console.error('Change role error:', error);
+    res.status(500).json({ message: 'Server error changing role' });
+  }
+});
+
 module.exports = router;

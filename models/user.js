@@ -407,7 +407,7 @@ async function findOrCreateGoogleUser(googleUserInfo, role = null) {
         firstName,
         lastName,
         picture,
-        role: role === 'doctor' ? 'doctor' : 'patient',
+        role: ['doctor', 'pharmacist'].includes(role) ? role : 'patient',
         authProvider: 'google'
       });
       isNewUser = true;
