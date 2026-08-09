@@ -621,6 +621,10 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       if (details.length) {
         invItemH += 15;
       }
+      if (inv.specialInstructions) {
+        doc.font('Helvetica-Oblique').fontSize(8.5);
+        invItemH += doc.heightOfString(`Instructions: ${inv.specialInstructions}`, { width: CW - 40 }) + 2;
+      }
       invItemH += 4; // spacing
       invTotalH += invItemH;
     });
@@ -651,6 +655,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         doc.font('Helvetica-Oblique').fontSize(9).fillColor('#666666')
           .text(details.join(' \u2014 '), M + 22, y, { width: CW - 40 });
         y += 13;
+      }
+      // Render special instructions if present
+      const specInstr = safeStr(inv.specialInstructions);
+      if (specInstr) {
+        doc.font('Helvetica-Oblique').fontSize(8.5).fillColor('#555555')
+          .text(`Instructions: ${specInstr}`, M + 22, y, { width: CW - 40 });
+        const instrH = doc.heightOfString(`Instructions: ${specInstr}`, { width: CW - 40 });
+        y += Math.max(12, instrH + 1);
       }
       y += 2;
     });
@@ -718,7 +730,8 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const signatureBuf = await loadImageBuffer(doctor.signature);
   const stampBuf = await loadImageBuffer(doctor.stamp);
   const hasSignatureImg = !!signatureBuf;
-  const sigStampH = hasSignatureImg ? 155 : 115;
+  const hasStampImg = !!stampBuf;
+  const sigStampH = hasSignatureImg ? (hasStampImg ? 155 : 130) : (hasStampImg ? 130 : 100);
   stickyTotalH += sigStampH;
 
   // Ensure all sticky sections fit on the same page
@@ -844,10 +857,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     doc.font('Helvetica').fontSize(9).text(`Date: ${fDate}`, M, siy);
   }
 
-  // Render Doctor's Stamp (image or text placeholder)
-  const stampX = PW - M - 150, stampW = 140, stampH = 70;
-  let stampRendered = false;
+  // Render Doctor's Stamp (only if doctor has uploaded a stamp image — no placeholder)
+  const stampW = 140, stampH = 70;
   if (stampBuf) {
+    const stampX = PW - M - 150;
+    let stampDrawn = false;
     try {
       doc.rect(stampX, sigY + 5, stampW, stampH).strokeColor(C.primary).lineWidth(1).stroke();
       doc.image(stampBuf, stampX + 5, sigY + 10, {
@@ -855,22 +869,15 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         align: 'center',
         valign: 'center'
       });
-      stampRendered = true;
+      stampDrawn = true;
     } catch (stampErr) {
       console.error('Stamp render error:', stampErr);
     }
+    y = stampDrawn ? Math.max(siy + 18, sigY + stampH + 20) : siy + 18;
+  } else {
+    // No stamp uploaded — skip stamp section entirely, clean layout
+    y = siy + 18;
   }
-
-  if (!stampRendered) {
-    doc.rect(stampX, sigY + 5, stampW, stampH).strokeColor(C.text).lineWidth(1).stroke();
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
-      .text("DOCTOR'S", stampX, sigY + 20, { width: stampW, align: 'center' });
-    doc.text('STAMP', stampX, sigY + 33, { width: stampW, align: 'center' });
-    doc.font('Helvetica').fontSize(8).fillColor('#666666')
-      .text('(Digital Signature)', stampX, sigY + 48, { width: stampW, align: 'center' });
-  }
-
-  y = Math.max(siy + 18, sigY + stampH + 20);
 
   // page footer on last page
   addFooter();
