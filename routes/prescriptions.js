@@ -365,6 +365,140 @@ router.get('/stats', doctor, async (req, res) => {
 });
 
 /**
+ * @route   POST /api/prescriptions/upload-external
+ * @desc    Upload external / past prescription document (3MB hard limit)
+ * @access  Private (Patient or Doctor)
+ */
+router.post('/upload-external', auth, async (req, res) => {
+  uploadExternal.single('file')(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds the 3 MB hard limit.' });
+      }
+      return res.status(400).json({ message: err.message || 'Error uploading record file' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No record file uploaded' });
+    }
+
+    try {
+      const userId = req.user.id;
+      const userRole = req.user.role;
+
+      let patientId = userId;
+      if (userRole === 'doctor' && req.body.patientId) {
+        patientId = req.body.patientId;
+      }
+
+      const filename = req.file.filename;
+      const fileUrl = `/uploads/records/${filename}`;
+      const isPdf = req.file.mimetype === 'application/pdf';
+
+      // Save to D1 images table if available
+      try {
+        const { createImage } = require('../models/ImageModel');
+        const fileData = fs.readFileSync(req.file.path);
+        await createImage({
+          filename,
+          originalName: req.file.originalname,
+          mimeType: req.file.mimetype,
+          data: fileData,
+          size: req.file.size,
+          imageType: 'external_prescription',
+          uploadedBy: userId
+        });
+      } catch (imgErr) {
+        console.log('[Prescriptions] D1 Image sync notice:', imgErr.message);
+      }
+
+      const newRecord = await createExternalPrescription({
+        patientId,
+        uploadedBy: userId,
+        title: req.body.title || req.file.originalname || 'Past Medical Record',
+        doctorName: req.body.doctorName || '',
+        recordDate: req.body.recordDate || new Date().toISOString().split('T')[0],
+        notes: req.body.notes || '',
+        fileUrl,
+        fileType: isPdf ? 'pdf' : 'image',
+        fileSize: req.file.size
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Past prescription record uploaded successfully',
+        record: newRecord
+      });
+    } catch (error) {
+      console.error('Upload external record error:', error);
+      res.status(500).json({ message: 'Server error uploading record: ' + (error.message || '') });
+    }
+  });
+});
+
+/**
+ * @route   GET /api/prescriptions/external
+ * @desc    Get external prescriptions for patient or doctor
+ * @access  Private
+ */
+router.get('/external', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const role = req.user.role;
+    let targetPatientId = userId;
+
+    if (role === 'doctor' && req.query.patientId) {
+      targetPatientId = req.query.patientId;
+    }
+
+    const records = await findExternalPrescriptionsByPatientId(targetPatientId);
+    res.json(records);
+  } catch (error) {
+    console.error('Get external prescriptions error:', error);
+    res.status(500).json({ message: 'Server error fetching external records' });
+  }
+});
+
+/**
+ * @route   GET /api/prescriptions/external/patient/:patientId
+ * @desc    Get external records for specific patient (for doctor viewing patient history)
+ * @access  Private (Doctor or Patient)
+ */
+router.get('/external/patient/:patientId', auth, async (req, res) => {
+  try {
+    const records = await findExternalPrescriptionsByPatientId(req.params.patientId);
+    res.json(records);
+  } catch (error) {
+    console.error('Get patient external records error:', error);
+    res.status(500).json({ message: 'Server error fetching records' });
+  }
+});
+
+/**
+ * @route   DELETE /api/prescriptions/external/:id
+ * @desc    Delete external prescription record
+ * @access  Private
+ */
+router.delete('/external/:id', auth, async (req, res) => {
+  try {
+    const record = await findExternalPrescriptionById(req.params.id);
+    if (!record) {
+      return res.status(404).json({ message: 'Record not found' });
+    }
+
+    if (record.uploadedBy !== req.user.id && record.patientId !== req.user.id && req.user.role !== 'doctor') {
+      return res.status(403).json({ message: 'Not authorized to delete this record' });
+    }
+
+    await deleteExternalPrescription(req.params.id);
+    res.json({ success: true, message: 'Record deleted successfully' });
+  } catch (error) {
+    console.error('Delete external record error:', error);
+    res.status(500).json({ message: 'Server error deleting record' });
+  }
+});
+
+/**
  * @route   GET /api/prescriptions/:id
  * @desc    Get prescription by ID
  * @access  Private
@@ -948,138 +1082,6 @@ router.put('/:id/dispense', auth, async (req, res) => {
   }
 });
 
-/**
- * @route   POST /api/prescriptions/upload-external
- * @desc    Upload external / past prescription document (3MB hard limit)
- * @access  Private (Patient or Doctor)
- */
-router.post('/upload-external', auth, async (req, res) => {
-  uploadExternal.single('file')(req, res, async (err) => {
-    if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({ message: 'File size exceeds the 3 MB hard limit.' });
-      }
-      return res.status(400).json({ message: err.message || 'Error uploading record file' });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({ message: 'No record file uploaded' });
-    }
-
-    try {
-      const userId = req.user.id;
-      const userRole = req.user.role;
-
-      let patientId = userId;
-      if (userRole === 'doctor' && req.body.patientId) {
-        patientId = req.body.patientId;
-      }
-
-      const filename = req.file.filename;
-      const fileUrl = `/uploads/records/${filename}`;
-      const isPdf = req.file.mimetype === 'application/pdf';
-
-      // Save to D1 images table if available
-      try {
-        const { createImage } = require('../models/ImageModel');
-        const fileData = fs.readFileSync(req.file.path);
-        await createImage({
-          filename,
-          originalName: req.file.originalname,
-          mimeType: req.file.mimetype,
-          data: fileData,
-          size: req.file.size,
-          imageType: 'external_prescription',
-          uploadedBy: userId
-        });
-      } catch (imgErr) {
-        console.log('[Prescriptions] D1 Image sync notice:', imgErr.message);
-      }
-
-      const newRecord = await createExternalPrescription({
-        patientId,
-        uploadedBy: userId,
-        title: req.body.title || req.file.originalname || 'Past Medical Record',
-        doctorName: req.body.doctorName || '',
-        recordDate: req.body.recordDate || new Date().toISOString().split('T')[0],
-        notes: req.body.notes || '',
-        fileUrl,
-        fileType: isPdf ? 'pdf' : 'image',
-        fileSize: req.file.size
-      });
-
-      res.status(201).json({
-        success: true,
-        message: 'Past prescription record uploaded successfully',
-        record: newRecord
-      });
-    } catch (error) {
-      console.error('Upload external record error:', error);
-      res.status(500).json({ message: 'Server error uploading record: ' + (error.message || '') });
-    }
-  });
-});
-
-/**
- * @route   GET /api/prescriptions/external
- * @desc    Get external prescriptions for patient or doctor
- * @access  Private
- */
-router.get('/external', auth, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const role = req.user.role;
-    let targetPatientId = userId;
-
-    if (role === 'doctor' && req.query.patientId) {
-      targetPatientId = req.query.patientId;
-    }
-
-    const records = await findExternalPrescriptionsByPatientId(targetPatientId);
-    res.json(records);
-  } catch (error) {
-    console.error('Get external prescriptions error:', error);
-    res.status(500).json({ message: 'Server error fetching external records' });
-  }
-});
-
-/**
- * @route   GET /api/prescriptions/external/patient/:patientId
- * @desc    Get external records for specific patient (for doctor viewing patient history)
- * @access  Private (Doctor or Patient)
- */
-router.get('/external/patient/:patientId', auth, async (req, res) => {
-  try {
-    const records = await findExternalPrescriptionsByPatientId(req.params.patientId);
-    res.json(records);
-  } catch (error) {
-    console.error('Get patient external records error:', error);
-    res.status(500).json({ message: 'Server error fetching records' });
-  }
-});
-
-/**
- * @route   DELETE /api/prescriptions/external/:id
- * @desc    Delete external prescription record
- * @access  Private
- */
-router.delete('/external/:id', auth, async (req, res) => {
-  try {
-    const record = await findExternalPrescriptionById(req.params.id);
-    if (!record) {
-      return res.status(404).json({ message: 'Record not found' });
-    }
-
-    if (record.uploadedBy !== req.user.id && record.patientId !== req.user.id && req.user.role !== 'doctor') {
-      return res.status(403).json({ message: 'Not authorized to delete this record' });
-    }
-
-    await deleteExternalPrescription(req.params.id);
-    res.json({ success: true, message: 'Record deleted successfully' });
-  } catch (error) {
-    console.error('Delete external record error:', error);
-    res.status(500).json({ message: 'Server error deleting record' });
-  }
-});
+/* External prescription routes moved above /:id route to prevent Express param-matching conflicts */
 
 module.exports = router;
