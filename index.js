@@ -55,10 +55,23 @@ if (!fs.existsSync(uploadsDir)) {
   }
 }
 
+// Allowed origins for CORS
+const allowedOrigins = [
+  'https://www.medizo.life',
+  'https://m.medizo.life',
+  'https://medizo.life',
+  'https://medizo-life.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:8081'
+];
+
 // Middleware: Enable CORS for Vercel, localhost & custom domains & handle OPTIONS preflight
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin) {
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -72,13 +85,6 @@ app.use((req, res, next) => {
   }
   next();
 });
-
-app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token', 'Accept']
-}));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
