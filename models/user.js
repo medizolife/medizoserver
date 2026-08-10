@@ -215,7 +215,7 @@ const createUser = async (userData) => {
       'website', 'linkedin', 'twitter', 'facebook', 'instagram',
       'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
       'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
-      'medicalHistory', 'emergencyContact', 'digilockerVerified', 'digilockerProfile',
+      'medicalHistory', 'emergencyContact', 'guardianId', 'digilockerVerified', 'digilockerProfile',
       'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires'
     ];
 
@@ -255,7 +255,7 @@ const ALLOWED_USER_COLUMNS = new Set([
   'website', 'linkedin', 'twitter', 'facebook', 'instagram',
   'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
   'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
-  'medicalHistory', 'emergencyContact', 'digilockerVerified', 'digilockerProfile',
+  'medicalHistory', 'emergencyContact', 'guardianId', 'digilockerVerified', 'digilockerProfile',
   'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires', 'updatedAt'
 ]);
 

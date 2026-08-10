@@ -90,12 +90,12 @@ router.delete('/profile/picture', auth, async (req, res) => {
 
 /**
  * @route   POST /api/users/patients/create
- * @desc    Create a new patient account (doctors only)
+ * @desc    Create a new patient account (doctors only). If patient is under 15, a guardian is required.
  * @access  Private (Doctor)
  */
 router.post('/patients/create', doctor, async (req, res) => {
   try {
-    const { firstName, lastName, email, phone, dateOfBirth, gender, address, noEmail } = req.body;
+    const { firstName, lastName, email, phone, dateOfBirth, gender, address, noEmail, guardianId, guardianData } = req.body;
 
     // Validate required fields based on noEmail flag
     if (!firstName || !lastName) {
@@ -118,6 +118,81 @@ router.post('/patients/create', doctor, async (req, res) => {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
         return res.status(400).json({ message: 'Invalid email format' });
+      }
+    }
+
+    // ── Guardian check for minors (under 15) ──
+    let resolvedGuardianId = '';
+    let resolvedGuardianName = '';
+    if (dateOfBirth && dateOfBirth.trim()) {
+      const dob = new Date(dateOfBirth);
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const monthDiff = today.getMonth() - dob.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+        age--;
+      }
+
+      if (age < 15) {
+        if (guardianId) {
+          // Link existing guardian — validate they exist
+          const guardianUser = await findUserById(guardianId);
+          if (!guardianUser) {
+            return res.status(400).json({ message: 'Guardian account not found. Please provide a valid guardian.' });
+          }
+          resolvedGuardianId = guardianUser.id;
+          resolvedGuardianName = `${guardianUser.firstName || ''} ${guardianUser.lastName || ''}`.trim();
+        } else if (guardianData && guardianData.firstName && guardianData.lastName) {
+          // Create new guardian account inline
+          const gPhone = (guardianData.phone || '').replace(/[\s\-\(\)\+]/g, '');
+          const gEmail = guardianData.email
+            ? guardianData.email.toLowerCase()
+            : `guardian_${gPhone || Date.now()}@patient.medizo.life`;
+          const gTempPassword = `${guardianData.firstName}@medizo`;
+
+          // Check if guardian email/phone already exists
+          let existingGuardian = null;
+          if (guardianData.email) {
+            existingGuardian = await findUserByEmail(gEmail);
+          } else if (gPhone) {
+            existingGuardian = await findUserByMobile(gPhone);
+          }
+
+          if (existingGuardian) {
+            // Guardian already exists — just link them
+            resolvedGuardianId = existingGuardian.id;
+            resolvedGuardianName = `${existingGuardian.firstName || ''} ${existingGuardian.lastName || ''}`.trim();
+          } else {
+            // Create the guardian as a new patient account
+            const newGuardian = await createUser({
+              firstName: guardianData.firstName,
+              lastName: guardianData.lastName,
+              email: gEmail,
+              password: gTempPassword,
+              role: 'patient',
+              phone: guardianData.phone || '',
+              dateOfBirth: guardianData.dateOfBirth || '',
+              gender: guardianData.gender || '',
+            });
+            resolvedGuardianId = newGuardian.id;
+            resolvedGuardianName = `${newGuardian.firstName || ''} ${newGuardian.lastName || ''}`.trim();
+            console.log('Guardian account auto-created:', newGuardian.id, gEmail);
+
+            // Also link guardian to this doctor
+            try {
+              const doctorData = await findUserById(req.user.id);
+              const linkedPatients = doctorData?.linkedPatients || [];
+              if (!linkedPatients.includes(newGuardian.id)) {
+                linkedPatients.push(newGuardian.id);
+                await updateUser(req.user.id, { linkedPatients });
+              }
+            } catch (gLinkErr) {
+              console.error('Failed to link guardian to doctor:', gLinkErr);
+            }
+          }
+        } else {
+          return res.status(400).json({ message: 'A legal guardian is required for patients under 15 years old' });
+        }
       }
     }
 
@@ -149,10 +224,11 @@ router.post('/patients/create', doctor, async (req, res) => {
       address: address || '',
       allergies: [],
       chronicConditions: [],
-      createdByDoctor: req.user.id
+      createdByDoctor: req.user.id,
+      guardianId: resolvedGuardianId
     });
 
-    console.log('New patient created by doctor:', newPatient.id, noEmail ? '(no-email mode)' : '(email mode)');
+    console.log('New patient created by doctor:', newPatient.id, noEmail ? '(no-email mode)' : '(email mode)', resolvedGuardianId ? `guardian: ${resolvedGuardianId}` : '');
 
     // Auto-link the new patient to this doctor so they appear in getMyPatients
     try {
@@ -171,7 +247,9 @@ router.post('/patients/create', doctor, async (req, res) => {
     res.status(201).json({
       message: `Patient account created successfully. Temporary password: ${tempPassword}`,
       patient: newPatient,
-      tempPassword
+      tempPassword,
+      guardianId: resolvedGuardianId || undefined,
+      guardianName: resolvedGuardianName || undefined
     });
   } catch (error) {
     console.error('Create patient error:', error);

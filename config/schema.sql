@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- Emergency contact (JSON object)
   emergencyContact TEXT DEFAULT '{"name":"","relationship":"","phone":""}',
 
+  -- Guardian (for minor patients under 15)
+  guardianId TEXT DEFAULT '',             -- references users.id of the legal guardian
+
   -- DigiLocker verification (doctors only)
   digilockerVerified INTEGER DEFAULT 0,  -- boolean: 0=false, 1=true
   digilockerProfile TEXT DEFAULT '{"verified":false,"name":"","dob":"","gender":"","email":"","mobile":"","maskedAadhaar":"","digilockerid":"","referenceKey":"","eaadhaar":"","panNumber":"","drivingLicence":""}',
