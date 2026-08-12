@@ -62,18 +62,72 @@ const doctor = async (req, res, next) => {
  * @param {Function} next - Express next middleware function
  */
 const patient = async (req, res, next) => {
-  // First authenticate user
   await auth(req, res, () => {
-    // Check if user is a patient
-    if (req.user && req.user.role !== 'patient') {
+    if (req.user && req.user.role !== 'patient' && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied: Patients only' });
     }
     next();
   });
 };
 
+/**
+ * Check if user is a nurse
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
+const nurse = async (req, res, next) => {
+  await auth(req, res, () => {
+    if (req.user && req.user.role !== 'nurse') {
+      return res.status(403).json({ message: 'Access denied: Nurses only' });
+    }
+    next();
+  });
+};
+
+/**
+ * Check if user is a doctor or nurse
+ */
+const doctorOrNurse = async (req, res, next) => {
+  await auth(req, res, () => {
+    if (req.user && !['doctor', 'nurse', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Access denied: Clinical staff only (Doctor/Nurse)' });
+    }
+    next();
+  });
+};
+
+/**
+ * Check if user is a doctor or admin
+ */
+const doctorOrAdmin = async (req, res, next) => {
+  await auth(req, res, () => {
+    if (req.user && (req.user.role === 'doctor' || req.user.role === 'admin' || req.user.email === 'admin@medizo.life')) {
+      return next();
+    }
+    return res.status(403).json({ message: 'Access denied: Doctor or Admin privileges required' });
+  });
+};
+
+/**
+ * Check if user is a nurse, doctor, or admin
+ */
+const nurseOrDoctorOrAdmin = async (req, res, next) => {
+  await auth(req, res, () => {
+    if (req.user && ['nurse', 'doctor', 'admin'].includes(req.user.role)) {
+      return next();
+    }
+    return res.status(403).json({ message: 'Access denied: Clinical staff or Admin privileges required' });
+  });
+};
+
 module.exports = {
   auth,
   doctor,
-  patient
+  patient,
+  nurse,
+  doctorOrNurse,
+  doctorOrAdmin,
+  nurseOrDoctorOrAdmin
 };
+

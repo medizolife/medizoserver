@@ -213,6 +213,7 @@ const createUser = async (userData) => {
       'qualifications', 'profileImage', 'clinicLogo', 'signature', 'stamp',
       'clinicName', 'alternateEmail', 'secondaryPhone', 'fax', 'whatsapp',
       'website', 'linkedin', 'twitter', 'facebook', 'instagram',
+      'nurseLicenseNumber', 'nurseQualifications', 'nurseSpecialization',
       'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
       'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
       'medicalHistory', 'emergencyContact', 'guardianId', 'digilockerVerified', 'digilockerProfile',
@@ -253,6 +254,7 @@ const ALLOWED_USER_COLUMNS = new Set([
   'qualifications', 'profileImage', 'clinicLogo', 'signature', 'stamp',
   'clinicName', 'alternateEmail', 'secondaryPhone', 'fax', 'whatsapp',
   'website', 'linkedin', 'twitter', 'facebook', 'instagram',
+  'nurseLicenseNumber', 'nurseQualifications', 'nurseSpecialization',
   'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
   'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
   'medicalHistory', 'emergencyContact', 'guardianId', 'digilockerVerified', 'digilockerProfile',
@@ -507,6 +509,24 @@ const createDemoUsers = async () => {
         bloodType: 'O+',
         allergies: { environmental: [], food: [], drugs: ['Penicillin'], other: [] },
         chronicConditions: [],
+        status: 'active'
+      });
+    }
+
+    // Check and create nurse demo user
+    const nurseUser = await findUserByEmail('nurse@test.com');
+    if (!nurseUser) {
+      console.log('Seeding nurse demo user (nurse@test.com)...');
+      await createUser({
+        firstName: 'Elena',
+        lastName: 'Martinez',
+        email: 'nurse@test.com',
+        password: 'password123',
+        role: 'nurse',
+        phone: '555-0199',
+        nurseLicenseNumber: 'RN-99201',
+        nurseQualifications: 'B.Sc. Nursing, Critical Care Specialist',
+        nurseSpecialization: 'Home Care & Post-Op Recovery',
         status: 'active'
       });
     }

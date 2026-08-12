@@ -111,6 +111,12 @@ app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/digilocker', require('./routes/digilocker'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/family-profiles', require('./routes/familyProfiles'));
+app.use('/api/billing', require('./routes/billing'));
+app.use('/api/network', require('./routes/network'));
+app.use('/api/referrals', require('./routes/referrals'));
+app.use('/api/home-care', require('./routes/homeCare'));
+app.use('/api/nurse-assignments', require('./routes/nurseAssignments'));
+app.use('/api/nurse-schedules', require('./routes/nurseSchedules'));
 
 // Basic route for testing
 app.get('/', (req, res) => {

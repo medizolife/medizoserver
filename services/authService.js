@@ -38,8 +38,8 @@ const validateRegistrationData = (userData) => {
   if (!userData.password || userData.password.length < 4) {
     errors.push('Password must be at least 4 characters');
   }
-  if (!userData.role || !['doctor', 'patient', 'pharmacist', 'admin'].includes(userData.role)) {
-    errors.push('Valid role is required (doctor, patient, pharmacist, or admin)');
+  if (!userData.role || !['doctor', 'patient', 'pharmacist', 'nurse', 'admin'].includes(userData.role)) {
+    errors.push('Valid role is required (doctor, patient, pharmacist, nurse, or admin)');
   }
 
   return { isValid: errors.length === 0, errors };

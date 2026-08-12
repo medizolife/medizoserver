@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { getUsers, createUser, updateUser, findUserById, deleteUser } = require('../models/user');
 const { getPrescriptions } = require('../models/prescription');
+const { getAllBills } = require('../models/billingModel');
+const { getAllReferrals } = require('../models/networkModel');
+const { getAllHomeCareRequests } = require('../models/homeCareModel');
+const { getAllAffiliations, getAllNursePatientAssignments, getAllDoctorPatientAssignments, createNurseDoctorAffiliation } = require('../models/assignmentModel');
+const { getAllSchedules } = require('../models/scheduleModel');
 const { auth } = require('../middleware/auth');
 
 /**
@@ -30,10 +35,14 @@ router.get('/stats', adminOnly, async (req, res) => {
   try {
     const allUsers = await getUsers();
     const allPrescriptions = await getPrescriptions();
+    const allBills = await getAllBills();
+    const allReferrals = await getAllReferrals();
+    const allHomeCare = await getAllHomeCareRequests();
 
     const doctors = allUsers.filter(u => u.role === 'doctor');
     const patients = allUsers.filter(u => u.role === 'patient');
     const pharmacists = allUsers.filter(u => u.role === 'pharmacist');
+    const nurses = allUsers.filter(u => u.role === 'nurse');
 
     const activeDoctors = doctors.filter(u => u.status !== 'deactivated').length;
     const deactivatedDoctors = doctors.length - activeDoctors;
@@ -44,10 +53,21 @@ router.get('/stats', adminOnly, async (req, res) => {
     const activePharmacists = pharmacists.filter(u => u.status !== 'deactivated').length;
     const deactivatedPharmacists = pharmacists.length - activePharmacists;
 
+    const activeNurses = nurses.filter(u => u.status !== 'deactivated').length;
+    const deactivatedNurses = nurses.length - activeNurses;
+
     const digilockerVerifiedDoctors = doctors.filter(u => u.digilockerVerified === true).length;
 
     const activePrescriptionsCount = allPrescriptions.filter(p => p.status === 'active').length;
     const completedPrescriptionsCount = allPrescriptions.filter(p => p.status === 'completed').length;
+
+    const totalRevenue = allBills
+      .filter(b => b.status === 'paid')
+      .reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
+
+    const pendingRevenue = allBills
+      .filter(b => ['draft', 'issued'].includes(b.status))
+      .reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
 
     res.json({
       success: true,
@@ -69,10 +89,33 @@ router.get('/stats', adminOnly, async (req, res) => {
           active: activePharmacists,
           deactivated: deactivatedPharmacists
         },
+        nurses: {
+          total: nurses.length,
+          active: activeNurses,
+          deactivated: deactivatedNurses
+        },
         prescriptions: {
           total: allPrescriptions.length,
           active: activePrescriptionsCount,
           completed: completedPrescriptionsCount
+        },
+        homeCareRequests: {
+          total: allHomeCare.length,
+          pending: allHomeCare.filter(h => ['requested', 'approved'].includes(h.status)).length,
+          inProgress: allHomeCare.filter(h => ['assigned', 'in_progress'].includes(h.status)).length,
+          completed: allHomeCare.filter(h => h.status === 'completed').length
+        },
+        referrals: {
+          total: allReferrals.length,
+          pending: allReferrals.filter(r => r.status === 'pending').length,
+          accepted: allReferrals.filter(r => r.status === 'accepted').length,
+          completed: allReferrals.filter(r => r.status === 'completed').length
+        },
+        billing: {
+          totalBills: allBills.length,
+          paidBills: allBills.filter(b => b.status === 'paid').length,
+          totalRevenue,
+          pendingRevenue
         }
       }
     });
@@ -327,4 +370,176 @@ router.get('/prescriptions', adminOnly, async (req, res) => {
   }
 });
 
+/**
+ * @route   GET /api/admin/nurses
+ * @desc    Get full roster of nurses with their affiliations and active assignments
+ * @access  Private (Admin)
+ */
+router.get('/nurses', adminOnly, async (req, res) => {
+  try {
+    const allUsers = await getUsers();
+    const nurses = allUsers.filter(u => u.role === 'nurse');
+    const affiliations = await getAllAffiliations();
+    const assignments = await getAllNursePatientAssignments();
+
+    const enhanced = nurses.map(nurse => {
+      const nurseAffiliations = affiliations.filter(a => String(a.nurseId) === String(nurse.id));
+      const activeAssignments = assignments.filter(a => String(a.nurseId) === String(nurse.id) && a.status === 'active');
+
+      return {
+        ...nurse,
+        affiliations: nurseAffiliations,
+        activeAssignmentsCount: activeAssignments.length,
+        totalAssignmentsCount: assignments.filter(a => String(a.nurseId) === String(nurse.id)).length
+      };
+    });
+
+    res.json({
+      success: true,
+      count: enhanced.length,
+      nurses: enhanced
+    });
+  } catch (error) {
+    console.error('[Admin API] Get nurses error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch nurse roster' });
+  }
+});
+
+/**
+ * @route   GET /api/admin/affiliations
+ * @desc    Get all doctor-nurse affiliations across the platform
+ * @access  Private (Admin)
+ */
+router.get('/affiliations', adminOnly, async (req, res) => {
+  try {
+    const affiliations = await getAllAffiliations();
+    res.json({ success: true, count: affiliations.length, affiliations });
+  } catch (error) {
+    console.error('[Admin API] Get affiliations error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch affiliations' });
+  }
+});
+
+/**
+ * @route   POST /api/admin/affiliations
+ * @desc    Create or update doctor-nurse affiliation from admin portal
+ * @access  Private (Admin)
+ */
+router.post('/affiliations', adminOnly, async (req, res) => {
+  try {
+    const { nurseId, doctorId, affiliationType, notes } = req.body;
+
+    if (!nurseId || !doctorId) {
+      return res.status(400).json({ success: false, message: 'Both nurseId and doctorId are required' });
+    }
+
+    const affiliation = await createNurseDoctorAffiliation(nurseId, doctorId, affiliationType, notes);
+    res.status(201).json({ success: true, message: 'Affiliation created successfully', affiliation });
+  } catch (error) {
+    console.error('[Admin API] Create affiliation error:', error);
+    res.status(400).json({ success: false, message: error.message || 'Failed to create affiliation' });
+  }
+});
+
+/**
+ * @route   GET /api/admin/assignments-overview
+ * @desc    Get matrix of all doctor-patient and nurse-patient assignments
+ * @access  Private (Admin)
+ */
+router.get('/assignments-overview', adminOnly, async (req, res) => {
+  try {
+    const nurseAssignments = await getAllNursePatientAssignments();
+    const doctorAssignments = await getAllDoctorPatientAssignments();
+
+    res.json({
+      success: true,
+      nurseAssignments: {
+        count: nurseAssignments.length,
+        items: nurseAssignments
+      },
+      doctorAssignments: {
+        count: doctorAssignments.length,
+        items: doctorAssignments
+      }
+    });
+  } catch (error) {
+    console.error('[Admin API] Get assignments overview error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch assignments overview' });
+  }
+});
+
+/**
+ * @route   GET /api/admin/referrals-overview
+ * @desc    Get system-wide referral log
+ * @access  Private (Admin)
+ */
+router.get('/referrals-overview', adminOnly, async (req, res) => {
+  try {
+    const referrals = await getAllReferrals();
+    res.json({ success: true, count: referrals.length, referrals });
+  } catch (error) {
+    console.error('[Admin API] Get referrals overview error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch referrals' });
+  }
+});
+
+/**
+ * @route   GET /api/admin/home-care-overview
+ * @desc    Get system-wide home care requests log
+ * @access  Private (Admin)
+ */
+router.get('/home-care-overview', adminOnly, async (req, res) => {
+  try {
+    const requests = await getAllHomeCareRequests();
+    res.json({ success: true, count: requests.length, requests });
+  } catch (error) {
+    console.error('[Admin API] Get home care overview error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch home care requests' });
+  }
+});
+
+/**
+ * @route   GET /api/admin/billing-overview
+ * @desc    Get system-wide billing audit log
+ * @access  Private (Admin)
+ */
+router.get('/billing-overview', adminOnly, async (req, res) => {
+  try {
+    const bills = await getAllBills();
+    const allUsers = await getUsers();
+    const userMap = new Map(allUsers.map(u => [String(u.id), u]));
+
+    const enhanced = bills.map(b => {
+      const doc = userMap.get(String(b.doctorId));
+      const pat = userMap.get(String(b.patientId));
+      return {
+        ...b,
+        doctorName: doc ? `Dr. ${doc.firstName} ${doc.lastName}` : 'N/A',
+        patientName: pat ? `${pat.firstName} ${pat.lastName}` : 'N/A'
+      };
+    });
+
+    res.json({ success: true, count: enhanced.length, bills: enhanced });
+  } catch (error) {
+    console.error('[Admin API] Get billing overview error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch billing overview' });
+  }
+});
+
+/**
+ * @route   GET /api/admin/schedules-overview
+ * @desc    Get system-wide nurse visit schedules
+ * @access  Private (Admin)
+ */
+router.get('/schedules-overview', adminOnly, async (req, res) => {
+  try {
+    const schedules = await getAllSchedules();
+    res.json({ success: true, count: schedules.length, schedules });
+  } catch (error) {
+    console.error('[Admin API] Get schedules overview error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch schedules' });
+  }
+});
+
 module.exports = router;
+

@@ -36,7 +36,7 @@ const connectDB = async () => {
       const schemaSql = fs.readFileSync(schemaPath, 'utf8');
       await execRawSQL(schemaSql);
       
-      // Ensure OTP columns exist on existing D1 databases
+      // Ensure OTP and Nurse columns exist on existing D1 databases
       const alterCols = [
         'ALTER TABLE users ADD COLUMN loginOtp TEXT DEFAULT "";',
         'ALTER TABLE users ADD COLUMN loginOtpExpires INTEGER DEFAULT 0;',
@@ -46,8 +46,10 @@ const connectDB = async () => {
         'ALTER TABLE users ADD COLUMN clinicLongitude REAL DEFAULT NULL;',
         'ALTER TABLE users ADD COLUMN clinicLocationAccuracy REAL DEFAULT NULL;',
         'ALTER TABLE users ADD COLUMN clinicPlaceName TEXT DEFAULT "";',
-        // Ensure stamp column exists (was in schema.sql but missing from migrations)
-        'ALTER TABLE users ADD COLUMN stamp TEXT DEFAULT "";'
+        'ALTER TABLE users ADD COLUMN stamp TEXT DEFAULT "";',
+        'ALTER TABLE users ADD COLUMN nurseLicenseNumber TEXT DEFAULT "";',
+        'ALTER TABLE users ADD COLUMN nurseQualifications TEXT DEFAULT "";',
+        'ALTER TABLE users ADD COLUMN nurseSpecialization TEXT DEFAULT "";'
       ];
       for (const colSql of alterCols) {
         try {
@@ -126,6 +128,34 @@ const connectDB = async () => {
       // Table may not exist yet on first run — it will be created by schema.sql
       if (!e.message?.includes('no such table')) {
         console.error('Family self-profiles migration notice:', e.message);
+      }
+    }
+
+    // Backfill doctor_patient_assignments from historical prescriptions
+    try {
+      await execRawSQL(`
+        INSERT OR IGNORE INTO doctor_patient_assignments (id, doctorId, patientId, familyProfileId, patientDisplayId, assignmentType, source, status, notes, createdAt, updatedAt)
+        SELECT 
+          lower(hex(randomblob(16))),
+          p.doctorId,
+          p.patientId,
+          COALESCE(p.accountId, ''),
+          COALESCE(p.patientDisplayId, ''),
+          'primary_care',
+          'prescription',
+          'active',
+          'Auto-backfilled from historical prescription',
+          p.createdAt,
+          datetime('now')
+        FROM prescriptions p
+        WHERE p.doctorId IS NOT NULL AND p.doctorId != ''
+        AND p.patientId IS NOT NULL AND p.patientId != ''
+        GROUP BY p.doctorId, p.patientId
+      `);
+      console.log('Doctor-patient assignments backfill completed.');
+    } catch (e) {
+      if (!e.message?.includes('no such table')) {
+        console.error('Doctor-patient assignments backfill notice:', e.message);
       }
     }
 

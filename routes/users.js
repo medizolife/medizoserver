@@ -95,6 +95,14 @@ router.delete('/profile/picture', auth, async (req, res) => {
  */
 router.post('/patients/create', doctor, async (req, res) => {
   try {
+    // Check DigiLocker verification for doctors
+    if (req.user && req.user.role === 'doctor' && !req.user.digilockerVerified) {
+      return res.status(403).json({
+        message: 'DigiLocker identity verification required. You must verify your identity with DigiLocker before creating new patient accounts.',
+        requiresVerification: true
+      });
+    }
+
     const { firstName, lastName, email, phone, dateOfBirth, gender, address, noEmail, guardianId, guardianData } = req.body;
 
     // Validate required fields based on noEmail flag

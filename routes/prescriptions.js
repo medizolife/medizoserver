@@ -386,6 +386,16 @@ router.post('/upload-external', auth, async (req, res) => {
       const userId = req.user.id;
       const userRole = req.user.role;
 
+      if (userRole === 'doctor') {
+        const verified = await isDoctorVerified(userId);
+        if (!verified) {
+          return res.status(403).json({
+            message: 'You must verify your identity via DigiLocker before uploading external prescriptions.',
+            requiresVerification: true
+          });
+        }
+      }
+
       let patientId = userId;
       if (userRole === 'doctor' && req.body.patientId) {
         patientId = req.body.patientId;

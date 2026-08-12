@@ -278,3 +278,252 @@ CREATE INDEX IF NOT EXISTS idx_family_profiles_accountId ON family_profiles(acco
 CREATE INDEX IF NOT EXISTS idx_family_profiles_displayId ON family_profiles(patientDisplayId);
 CREATE INDEX IF NOT EXISTS idx_family_profiles_active ON family_profiles(accountId, isActive);
 
+
+-- ============================================================
+-- BILLING & BILL ITEMS TABLES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS bills (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  billNumber TEXT NOT NULL UNIQUE,
+  patientId TEXT NOT NULL,
+  familyProfileId TEXT DEFAULT '',
+  patientDisplayId TEXT DEFAULT '',
+  doctorId TEXT NOT NULL,
+  prescriptionId TEXT DEFAULT '',
+  subtotal REAL NOT NULL DEFAULT 0.0,
+  tax REAL NOT NULL DEFAULT 0.0,
+  discount REAL NOT NULL DEFAULT 0.0,
+  totalAmount REAL NOT NULL DEFAULT 0.0,
+  currency TEXT DEFAULT 'INR',
+  status TEXT NOT NULL DEFAULT 'draft',        -- 'draft', 'issued', 'paid', 'cancelled', 'refunded'
+  paymentMethod TEXT DEFAULT '',               -- 'cash', 'upi', 'card', 'insurance', 'bank_transfer', 'online'
+  paymentTransactionRef TEXT DEFAULT '',
+  paidAt TEXT DEFAULT NULL,
+  paymentNotes TEXT DEFAULT '',
+  receiptNumber TEXT DEFAULT '',
+  dueDate TEXT DEFAULT '',
+  notes TEXT DEFAULT '',
+  createdBy TEXT NOT NULL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bills_patientId ON bills(patientId);
+CREATE INDEX IF NOT EXISTS idx_bills_doctorId ON bills(doctorId);
+CREATE INDEX IF NOT EXISTS idx_bills_prescriptionId ON bills(prescriptionId);
+CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(status);
+CREATE INDEX IF NOT EXISTS idx_bills_billNumber ON bills(billNumber);
+
+CREATE TABLE IF NOT EXISTS bill_items (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  billId TEXT NOT NULL,
+  itemType TEXT NOT NULL DEFAULT 'consultation', -- 'consultation', 'medication', 'investigation', 'procedure', 'home_care_visit', 'other'
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  unitPrice REAL NOT NULL DEFAULT 0.0,
+  totalPrice REAL NOT NULL DEFAULT 0.0,
+  notes TEXT DEFAULT '',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bill_items_billId ON bill_items(billId);
+
+
+-- ============================================================
+-- DOCTOR NETWORK & REFERRALS TABLES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS doctor_networks (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  doctorId TEXT NOT NULL,
+  connectedDoctorId TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'accepted',      -- 'pending', 'accepted', 'rejected', 'removed'
+  notes TEXT DEFAULT '',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(doctorId, connectedDoctorId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_net_doctorId ON doctor_networks(doctorId);
+CREATE INDEX IF NOT EXISTS idx_doc_net_connectedDocId ON doctor_networks(connectedDoctorId);
+CREATE INDEX IF NOT EXISTS idx_doc_net_status ON doctor_networks(status);
+
+CREATE TABLE IF NOT EXISTS doctor_referrals (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  referralNumber TEXT NOT NULL UNIQUE,
+  referringDoctorId TEXT NOT NULL,
+  referredDoctorId TEXT NOT NULL,
+  patientId TEXT NOT NULL,
+  familyProfileId TEXT DEFAULT '',
+  patientDisplayId TEXT DEFAULT '',
+  prescriptionId TEXT DEFAULT '',
+  reason TEXT NOT NULL,
+  clinicalSummary TEXT DEFAULT '',
+  priority TEXT NOT NULL DEFAULT 'routine',     -- 'routine', 'urgent', 'emergency'
+  status TEXT NOT NULL DEFAULT 'pending',       -- 'pending', 'accepted', 'rejected', 'cancelled', 'completed'
+  responseNotes TEXT DEFAULT '',
+  respondedAt TEXT DEFAULT NULL,
+  completedAt TEXT DEFAULT NULL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_ref_referringDoc ON doctor_referrals(referringDoctorId);
+CREATE INDEX IF NOT EXISTS idx_doc_ref_referredDoc ON doctor_referrals(referredDoctorId);
+CREATE INDEX IF NOT EXISTS idx_doc_ref_patient ON doctor_referrals(patientId);
+CREATE INDEX IF NOT EXISTS idx_doc_ref_status ON doctor_referrals(status);
+CREATE INDEX IF NOT EXISTS idx_doc_ref_number ON doctor_referrals(referralNumber);
+
+
+-- ============================================================
+-- HOME CARE REQUESTS & CLINICAL VISIT RECORDS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS home_care_requests (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  requestNumber TEXT NOT NULL UNIQUE,
+  patientId TEXT NOT NULL,
+  familyProfileId TEXT DEFAULT '',
+  patientDisplayId TEXT DEFAULT '',
+  requestedByRole TEXT NOT NULL DEFAULT 'patient', -- 'patient', 'doctor'
+  requestedById TEXT NOT NULL,
+  advisedByDoctorId TEXT DEFAULT '',
+  serviceType TEXT NOT NULL DEFAULT 'general_checkup', -- 'general_checkup', 'wound_care', 'post_op_care', 'vitals_monitoring', 'medication_administration', 'elderly_care', 'physiotherapy', 'palliative_care', 'other'
+  urgency TEXT NOT NULL DEFAULT 'routine',        -- 'routine', 'standard', 'urgent'
+  preferredDate TEXT DEFAULT '',
+  preferredTimeSlot TEXT DEFAULT '',             -- 'morning', 'afternoon', 'evening', 'anytime'
+  address TEXT NOT NULL,
+  contactPhone TEXT NOT NULL,
+  clinicalInstructions TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'requested',      -- 'requested', 'approved', 'assigned', 'in_progress', 'completed', 'cancelled'
+  assignedNurseId TEXT DEFAULT '',
+  completedAt TEXT DEFAULT NULL,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_hcr_patientId ON home_care_requests(patientId);
+CREATE INDEX IF NOT EXISTS idx_hcr_assignedNurse ON home_care_requests(assignedNurseId);
+CREATE INDEX IF NOT EXISTS idx_hcr_advisedDoc ON home_care_requests(advisedByDoctorId);
+CREATE INDEX IF NOT EXISTS idx_hcr_status ON home_care_requests(status);
+CREATE INDEX IF NOT EXISTS idx_hcr_requestNumber ON home_care_requests(requestNumber);
+
+CREATE TABLE IF NOT EXISTS care_visit_records (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  homeCareRequestId TEXT DEFAULT '',
+  scheduleId TEXT DEFAULT '',
+  assignmentId TEXT DEFAULT '',
+  nurseId TEXT NOT NULL,
+  patientId TEXT NOT NULL,
+  familyProfileId TEXT DEFAULT '',
+  patientDisplayId TEXT DEFAULT '',
+  visitDate TEXT NOT NULL,
+  vitals TEXT DEFAULT '{}',                      -- JSON: { bpSystolic, bpDiastolic, pulseRate, temperature, spo2, bloodSugar, respiratoryRate }
+  symptomsObserved TEXT DEFAULT '[]',            -- JSON array
+  proceduresPerformed TEXT DEFAULT '[]',         -- JSON array
+  medicationsAdministered TEXT DEFAULT '[]',     -- JSON array
+  careNotes TEXT NOT NULL,
+  patientCondition TEXT DEFAULT 'stable',        -- 'stable', 'improving', 'deteriorating', 'critical'
+  doctorFeedbackRequired INTEGER DEFAULT 0,
+  doctorFeedbackNotes TEXT DEFAULT '',
+  attachments TEXT DEFAULT '[]',                 -- JSON array of file URLs
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cvr_nurseId ON care_visit_records(nurseId);
+CREATE INDEX IF NOT EXISTS idx_cvr_patientId ON care_visit_records(patientId);
+CREATE INDEX IF NOT EXISTS idx_cvr_requestId ON care_visit_records(homeCareRequestId);
+CREATE INDEX IF NOT EXISTS idx_cvr_visitDate ON care_visit_records(visitDate);
+
+
+-- ============================================================
+-- NURSE-DOCTOR AFFILIATIONS & ASSIGNMENTS TABLES
+-- ============================================================
+CREATE TABLE IF NOT EXISTS nurse_doctor_affiliations (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  nurseId TEXT NOT NULL,
+  doctorId TEXT NOT NULL,
+  affiliationType TEXT DEFAULT 'employed',       -- 'employed', 'network_associate', 'clinic_staff', 'independent_partner'
+  status TEXT NOT NULL DEFAULT 'active',         -- 'active', 'inactive'
+  notes TEXT DEFAULT '',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(nurseId, doctorId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nda_nurseId ON nurse_doctor_affiliations(nurseId);
+CREATE INDEX IF NOT EXISTS idx_nda_doctorId ON nurse_doctor_affiliations(doctorId);
+CREATE INDEX IF NOT EXISTS idx_nda_status ON nurse_doctor_affiliations(status);
+
+CREATE TABLE IF NOT EXISTS nurse_patient_assignments (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  nurseId TEXT NOT NULL,
+  patientId TEXT NOT NULL,
+  familyProfileId TEXT DEFAULT '',
+  patientDisplayId TEXT DEFAULT '',
+  assignedByDoctorId TEXT DEFAULT '',
+  assignmentType TEXT NOT NULL DEFAULT 'general_care', -- 'general_care', 'wound_care', 'post_op', 'physiotherapy', 'medication_administration', 'chronic_disease_monitoring', 'elderly_care'
+  diseaseCondition TEXT DEFAULT '',
+  startDate TEXT NOT NULL,
+  endDate TEXT DEFAULT NULL,
+  frequency TEXT DEFAULT 'daily',                -- 'daily', 'weekly', 'biweekly', 'as_needed', 'custom'
+  specialInstructions TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',         -- 'active', 'paused', 'completed', 'terminated'
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_npa_nurseId ON nurse_patient_assignments(nurseId);
+CREATE INDEX IF NOT EXISTS idx_npa_patientId ON nurse_patient_assignments(patientId);
+CREATE INDEX IF NOT EXISTS idx_npa_docId ON nurse_patient_assignments(assignedByDoctorId);
+CREATE INDEX IF NOT EXISTS idx_npa_status ON nurse_patient_assignments(status);
+
+CREATE TABLE IF NOT EXISTS doctor_patient_assignments (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  doctorId TEXT NOT NULL,
+  patientId TEXT NOT NULL,
+  familyProfileId TEXT DEFAULT '',
+  patientDisplayId TEXT DEFAULT '',
+  assignmentType TEXT DEFAULT 'primary_care',    -- 'primary_care', 'consultant', 'referred', 'specialist'
+  source TEXT DEFAULT 'prescription',            -- 'prescription', 'referral', 'manual_link', 'direct_registration'
+  status TEXT NOT NULL DEFAULT 'active',         -- 'active', 'discharged', 'transferred', 'inactive'
+  notes TEXT DEFAULT '',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now')),
+  UNIQUE(doctorId, patientId, familyProfileId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dpa_doctorId ON doctor_patient_assignments(doctorId);
+CREATE INDEX IF NOT EXISTS idx_dpa_patientId ON doctor_patient_assignments(patientId);
+CREATE INDEX IF NOT EXISTS idx_dpa_status ON doctor_patient_assignments(status);
+
+
+-- ============================================================
+-- NURSE SCHEDULING TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS nurse_schedules (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  nurseId TEXT NOT NULL,
+  patientId TEXT NOT NULL,
+  familyProfileId TEXT DEFAULT '',
+  patientDisplayId TEXT DEFAULT '',
+  assignmentId TEXT DEFAULT '',
+  homeCareRequestId TEXT DEFAULT '',
+  startDatetime TEXT NOT NULL,                   -- ISO 8601 string: 2026-08-15T09:00:00.000Z
+  endDatetime TEXT NOT NULL,                     -- ISO 8601 string: 2026-08-15T10:30:00.000Z
+  serviceType TEXT NOT NULL,
+  locationAddress TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled',      -- 'scheduled', 'en_route', 'in_progress', 'completed', 'missed', 'cancelled', 'rescheduled'
+  notes TEXT DEFAULT '',
+  cancellationReason TEXT DEFAULT '',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ns_nurseId ON nurse_schedules(nurseId);
+CREATE INDEX IF NOT EXISTS idx_ns_patientId ON nurse_schedules(patientId);
+CREATE INDEX IF NOT EXISTS idx_ns_startDatetime ON nurse_schedules(startDatetime);
+CREATE INDEX IF NOT EXISTS idx_ns_endDatetime ON nurse_schedules(endDatetime);
+CREATE INDEX IF NOT EXISTS idx_ns_status ON nurse_schedules(status);
+
+
