@@ -61,7 +61,10 @@ const allowedOrigins = [
   'https://m.medizo.life',
   'https://medizo.life',
   'https://medizo-life.vercel.app',
+  'https://medizoserver.medizolife.workers.dev',
+  'https://medizoserver.vercel.app',
   'http://localhost:3000',
+  'http://localhost:3001',
   'http://localhost:5173',
   'http://localhost:8081'
 ];
