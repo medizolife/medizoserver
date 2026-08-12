@@ -1,0 +1,13 @@
+name = "medizoserver"
+main = "index.js"
+compatibility_date = "2024-09-25"
+compatibility_flags = [ "nodejs_compat" ]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "medizolifecloud"
+database_id = "206ec373-b5bb-4ec4-8304-778692299181"
+
+[vars]
+JWT_SECRET = "medizo_jwt_secret_key_2026_health"
+CLIENT_URL = "https://medizo.life"
