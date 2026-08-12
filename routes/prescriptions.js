@@ -24,7 +24,7 @@ const { sendPrescriptionNotification } = require('../services/email');
 const { getFamilyProfileById } = require('../models/familyProfile');
 
 // Configure Multer for external record uploads
-const recordsDir = process.env.VERCEL 
+const recordsDir = (process.env.VERCEL || typeof __dirname === 'undefined')
   ? '/tmp/uploads/records' 
   : path.join(__dirname, '../uploads/records');
 if (!fs.existsSync(recordsDir)) {

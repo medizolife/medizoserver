@@ -40,10 +40,12 @@ router.post('/profile/picture', auth, upload.single('profilePicture'), async (re
     // Delete old profile picture if exists
     const user = await findUserById(req.user.id);
     if (user && user.profilePicture) {
-      const oldPicturePath = path.join(__dirname, '..', user.profilePicture);
-      if (fs.existsSync(oldPicturePath)) {
-        fs.unlinkSync(oldPicturePath);
-      }
+      try {
+        const oldPicturePath = typeof __dirname !== 'undefined' ? path.join(__dirname, '..', user.profilePicture) : null;
+        if (oldPicturePath && fs.existsSync && fs.existsSync(oldPicturePath)) {
+          fs.unlinkSync(oldPicturePath);
+        }
+      } catch (e) {}
     }
 
     // Update user with new profile picture path
@@ -70,10 +72,12 @@ router.delete('/profile/picture', auth, async (req, res) => {
   try {
     const user = await findUserById(req.user.id);
     if (user && user.profilePicture) {
-      const picturePath = path.join(__dirname, '..', user.profilePicture);
-      if (fs.existsSync(picturePath)) {
-        fs.unlinkSync(picturePath);
-      }
+      try {
+        const picturePath = typeof __dirname !== 'undefined' ? path.join(__dirname, '..', user.profilePicture) : null;
+        if (picturePath && fs.existsSync && fs.existsSync(picturePath)) {
+          fs.unlinkSync(picturePath);
+        }
+      } catch (e) {}
     }
 
     const updatedUser = await updateUser(req.user.id, { profilePicture: null });

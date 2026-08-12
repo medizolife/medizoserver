@@ -29,12 +29,17 @@ const connectDB = async () => {
       return false;
     }
 
-    // Run schema migrations
-    const schemaPath = path.join(__dirname, 'schema.sql');
-    if (fs.existsSync(schemaPath)) {
-      console.log('Running D1 schema migrations...');
-      const schemaSql = fs.readFileSync(schemaPath, 'utf8');
-      await execRawSQL(schemaSql);
+    // Run schema migrations if schema file is accessible
+    try {
+      const schemaPath = typeof __dirname !== 'undefined' ? path.join(__dirname, 'schema.sql') : null;
+      if (schemaPath && fs.existsSync && fs.existsSync(schemaPath)) {
+        console.log('Running D1 schema migrations...');
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        await execRawSQL(schemaSql);
+      }
+    } catch (e) {
+      console.log('Schema migration notice:', e.message);
+    }
       
       // Ensure OTP and Nurse columns exist on existing D1 databases
       const alterCols = [
@@ -80,7 +85,6 @@ const connectDB = async () => {
       }
 
       console.log('D1 schema migrations completed.');
-    }
 
     // Ensure family_profiles table and prescription columns exist
     const familyMigrations = [

@@ -31,10 +31,12 @@ async function loadImageBuffer(urlPath) {
   } catch (e) {
     console.error('D1 image lookup error:', e.message);
   }
-  // Fallback: try local file
-  const cleanUrl = String(urlPath).split('?')[0];
-  const localPath = path.join(__dirname, '..', cleanUrl.replace(/^\//, ''));
-  if (fs.existsSync(localPath)) return fs.readFileSync(localPath);
+  // Fallback: try local file if filesystem is available
+  try {
+    const cleanUrl = String(urlPath).split('?')[0];
+    const localPath = typeof __dirname !== 'undefined' ? path.join(__dirname, '..', cleanUrl.replace(/^\//, '')) : null;
+    if (localPath && fs.existsSync && fs.existsSync(localPath)) return fs.readFileSync(localPath);
+  } catch (e) {}
   return null;
 }
 

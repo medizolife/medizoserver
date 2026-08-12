@@ -2,14 +2,18 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
-const sharp = require('sharp');
+let sharp;
+try {
+  sharp = require('sharp');
+} catch (e) {
+  // Sharp is optional; fallback to raw buffer on edge runtimes
+}
 const { findUserById, updateUser, getUsers } = require('../models/user');
 const { doctor } = require('../middleware/auth');
 const Image = require('../models/ImageModel');
 
 // Ensure uploads directory exists (fallback for when D1 is not available)
-const uploadsDir = process.env.VERCEL 
+const uploadsDir = (process.env.VERCEL || typeof __dirname === 'undefined')
   ? '/tmp/uploads/doctors' 
   : path.join(__dirname, '../uploads/doctors');
 try {
