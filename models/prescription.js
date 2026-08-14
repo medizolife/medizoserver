@@ -5,7 +5,7 @@ const PRESCRIPTION_JSON_FIELDS = [
   'vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
   'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
   'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
-  'warningSigns', 'followUpInfo', 'dispensedBy'
+  'warningSigns', 'followUpInfo', 'dispensedBy', 'testReports'
 ];
 
 /**
@@ -142,7 +142,7 @@ const createPrescription = async (prescriptionData) => {
       'currentMedications', 'pastSurgicalHistory',
       'diagnosis', 'medication', 'dosage', 'frequency', 'duration', 'instructions', 'notes',
       'medications', 'medicationNotes',
-      'testsRequired', 'investigations', 'investigationNotes',
+      'testsRequired', 'investigations', 'investigationNotes', 'testReports',
       'dietModifications', 'lifestyleChanges', 'warningSigns',
       'followUpDate', 'followUpInfo', 'emergencyHelpline',
       'qrCode', 'status', 'dispensedStatus', 'dispensedAt', 'dispensedBy', 'dispenseNotes'

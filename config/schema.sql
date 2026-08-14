@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   testsRequired TEXT DEFAULT '[]',
   investigations TEXT DEFAULT '[]',
   investigationNotes TEXT DEFAULT '',
+  testReports TEXT DEFAULT '[]',
 
   -- Dietary & Lifestyle (JSON arrays)
   dietModifications TEXT DEFAULT '[]',

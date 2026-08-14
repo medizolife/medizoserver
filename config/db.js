@@ -91,6 +91,7 @@ const connectDB = async () => {
       // Add accountId and patientDisplayId to prescriptions
       'ALTER TABLE prescriptions ADD COLUMN accountId TEXT DEFAULT "";',
       'ALTER TABLE prescriptions ADD COLUMN patientDisplayId TEXT DEFAULT "";',
+      'ALTER TABLE prescriptions ADD COLUMN testReports TEXT DEFAULT "[]";',
     ];
     for (const migSql of familyMigrations) {
       try {

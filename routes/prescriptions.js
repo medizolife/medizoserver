@@ -56,6 +56,29 @@ const uploadExternal = multer({
   }
 });
 
+// Configure Multer for prescription test / lab report uploads (10MB limit)
+const testReportStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, recordsDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, `test-report-${uniqueSuffix}${ext}`);
+  }
+});
+
+const uploadTestReport = multer({
+  storage: testReportStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file format. Only JPEG, PNG, GIF, WEBP and PDF files are allowed.'));
+    }
+  }
+});
+
 /**
  * Check if a doctor is DigiLocker verified
  * @param {string} doctorId - Doctor's user ID
@@ -509,6 +532,172 @@ router.delete('/external/:id', auth, async (req, res) => {
 });
 
 /**
+ * @route   POST /api/prescriptions/:id/test-reports
+ * @desc    Upload diagnostic / lab test report for a prescription (Patient or Doctor)
+ * @access  Private
+ */
+router.post('/:id/test-reports', auth, async (req, res) => {
+  uploadTestReport.single('file')(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds the 10 MB limit.' });
+      }
+      return res.status(400).json({ message: err.message || 'Error uploading test report' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No test report file selected' });
+    }
+
+    try {
+      const prescriptionId = req.params.id;
+      const userId = req.user.id;
+      const role = req.user.role;
+
+      const prescription = await findPrescriptionById(prescriptionId);
+      if (!prescription) {
+        return res.status(404).json({ message: 'Prescription not found' });
+      }
+
+      // Check access permission (patient of prescription, doctor of prescription, or admin)
+      if (
+        role === 'patient' && prescription.patientId !== userId &&
+        prescription.patientEmail?.toLowerCase() !== req.user.email?.toLowerCase()
+      ) {
+        return res.status(403).json({ message: 'Access denied: You can only upload test reports for your own prescriptions' });
+      }
+
+      const filename = req.file.filename;
+      const fileUrl = `/uploads/records/${filename}`;
+      const isPdf = req.file.mimetype === 'application/pdf';
+
+      // Sync to D1 images table if available
+      try {
+        const { createImage } = require('../models/ImageModel');
+        const fileData = fs.readFileSync(req.file.path);
+        await createImage({
+          filename,
+          originalName: req.file.originalname,
+          mimeType: req.file.mimetype,
+          data: fileData,
+          size: req.file.size,
+          imageType: 'prescription_test_report',
+          uploadedBy: userId
+        });
+      } catch (imgErr) {
+        console.log('[Prescriptions] D1 Test Report Image sync notice:', imgErr.message);
+      }
+
+      const reportId = require('crypto').randomBytes(8).toString('hex');
+      const uploaderName = req.user.firstName 
+        ? `${req.user.firstName} ${req.user.lastName || ''}`.trim() 
+        : (req.user.name || (role === 'doctor' ? 'Doctor' : 'Patient'));
+
+      const newReport = {
+        id: reportId,
+        testName: req.body.testName || 'Diagnostic Test Report',
+        filename,
+        originalName: req.file.originalname,
+        fileUrl,
+        fileType: isPdf ? 'pdf' : 'image',
+        mimeType: req.file.mimetype,
+        fileSize: req.file.size,
+        uploadedBy: userId,
+        uploadedByName: uploaderName,
+        uploaderRole: role,
+        uploadedAt: new Date().toISOString(),
+        notes: req.body.notes || ''
+      };
+
+      const existingReports = Array.isArray(prescription.testReports) 
+        ? [...prescription.testReports] 
+        : [];
+      
+      existingReports.push(newReport);
+
+      const updatedPrescription = await updatePrescription(prescriptionId, {
+        testReports: existingReports
+      });
+
+      console.log('✅ Test report successfully attached to prescription:', prescriptionId, 'Report ID:', reportId);
+
+      res.status(201).json({
+        success: true,
+        message: 'Test report uploaded successfully',
+        report: newReport,
+        testReports: existingReports,
+        prescription: updatedPrescription
+      });
+    } catch (error) {
+      console.error('Upload test report error:', error);
+      res.status(500).json({ message: 'Server error uploading test report: ' + (error.message || '') });
+    }
+  });
+});
+
+/**
+ * @route   DELETE /api/prescriptions/:id/test-reports/:reportId
+ * @desc    Delete an uploaded test report from a prescription
+ * @access  Private (Patient or Doctor)
+ */
+router.delete('/:id/test-reports/:reportId', auth, async (req, res) => {
+  try {
+    const { id: prescriptionId, reportId } = req.params;
+    const userId = req.user.id;
+    const role = req.user.role;
+
+    const prescription = await findPrescriptionById(prescriptionId);
+    if (!prescription) {
+      return res.status(404).json({ message: 'Prescription not found' });
+    }
+
+    // Access check
+    if (
+      role === 'patient' && prescription.patientId !== userId &&
+      prescription.patientEmail?.toLowerCase() !== req.user.email?.toLowerCase()
+    ) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const existingReports = Array.isArray(prescription.testReports) ? prescription.testReports : [];
+    const reportToDelete = existingReports.find(r => r.id === reportId);
+    
+    if (!reportToDelete) {
+      return res.status(404).json({ message: 'Test report not found' });
+    }
+
+    // Remove from file system if exists
+    if (reportToDelete.filename) {
+      const filePath = path.join(recordsDir, reportToDelete.filename);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (e) {}
+      }
+      try {
+        const { deleteByFilename } = require('../models/ImageModel');
+        await deleteByFilename(reportToDelete.filename);
+      } catch (e) {}
+    }
+
+    const updatedReports = existingReports.filter(r => r.id !== reportId);
+    const updatedPrescription = await updatePrescription(prescriptionId, {
+      testReports: updatedReports
+    });
+
+    console.log('✅ Test report removed from prescription:', prescriptionId, 'Report ID:', reportId);
+
+    res.json({
+      success: true,
+      message: 'Test report deleted successfully',
+      testReports: updatedReports,
+      prescription: updatedPrescription
+    });
+  } catch (error) {
+    console.error('Delete test report error:', error);
+    res.status(500).json({ message: 'Server error deleting test report' });
+  }
+});
+
+/**
  * @route   GET /api/prescriptions/:id
  * @desc    Get prescription by ID
  * @access  Private
@@ -801,6 +990,7 @@ router.put('/:id', doctor, async (req, res) => {
       followUpInfo,
       emergencyHelpline,
       notes,
+      testReports,
       status,
       // Legacy fields
       medication, 
@@ -830,6 +1020,7 @@ router.put('/:id', doctor, async (req, res) => {
     if (followUpInfo !== undefined) updateData.followUpInfo = followUpInfo;
     if (emergencyHelpline !== undefined) updateData.emergencyHelpline = emergencyHelpline;
     if (notes !== undefined) updateData.notes = notes;
+    if (testReports !== undefined) updateData.testReports = testReports;
     if (status !== undefined) updateData.status = status;
     
     // Legacy fields
