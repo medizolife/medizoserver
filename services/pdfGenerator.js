@@ -3,7 +3,10 @@
  * Generates a professional multi-page prescription PDF matching the LaTeX template.
  * Content flows naturally — pages break only when space runs out.
  */
-const PDFDocument = require('pdfkit');
+if (typeof globalThis.__dirname === 'undefined') {
+  globalThis.__dirname = '/';
+}
+const PDFDocument = require('pdfkit/js/pdfkit.standalone');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
@@ -64,16 +67,36 @@ const maxY = PH - FOOTER_ZONE;
 //  Main export
 // ====================================================================
 async function generatePrescriptionPDF(res, prescriptionId, prescription, patient, doctor) {
-  const doc = new PDFDocument({ margin: M, size: 'A4' });
+  return new Promise(async (resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: M, size: 'A4' });
+      const buffers = [];
 
-  res.setHeader('Content-Type', 'application/pdf');
-  const isDownload = res.req?.query?.download === 'true';
-  const dispositionType = isDownload ? 'attachment' : 'inline';
-  res.setHeader('Content-Disposition', `${dispositionType}; filename="prescription-${prescriptionId}.pdf"`);
-  doc.pipe(res);
+      doc.on('data', chunk => buffers.push(chunk));
+      doc.on('end', () => {
+        try {
+          const pdfBuffer = Buffer.concat(buffers);
+          if (res && !res.headersSent) {
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Length', pdfBuffer.length);
+            const isDownload = res.req?.query?.download === 'true';
+            const dispositionType = isDownload ? 'attachment' : 'inline';
+            res.setHeader('Content-Disposition', `${dispositionType}; filename="prescription-${prescriptionId}.pdf"`);
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.send(pdfBuffer);
+          }
+          resolve(pdfBuffer);
+        } catch (e) {
+          reject(e);
+        }
+      });
+      doc.on('error', err => {
+        console.error('PDFDocument internal error:', err);
+        reject(err);
+      });
 
-  let y = M;
-  let pg = 1;
+      let y = M;
+      let pg = 1;
 
   // ── data normalisation ──────────────────────────────────────────
   const complaints     = prescription.presentingComplaints || [];
@@ -885,6 +908,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   addFooter();
 
   doc.end();
+    } catch (err) {
+      console.error('generatePrescriptionPDF error:', err);
+      reject(err);
+    }
+  });
 }
 
 module.exports = { generatePrescriptionPDF };

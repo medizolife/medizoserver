@@ -55,11 +55,11 @@ const registerUser = async (userData) => {
 
   // Generate JWT token
   const jwt = require('jsonwebtoken');
-  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+  const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
   const token = jwt.sign(
     { id: user.id, role: user.role },
     jwtSecret,
-    { expiresIn: '1d' }
+    { expiresIn: '30d' }
   );
 
   return { user, token };
@@ -325,11 +325,11 @@ const loginUserByEmailOtp = async (email, otp) => {
 
   // Generate JWT token
   const jwt = require('jsonwebtoken');
-  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+  const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
   const token = jwt.sign(
     { id: user.id, role: user.role },
     jwtSecret,
-    { expiresIn: '1d' }
+    { expiresIn: '30d' }
   );
 
   const sanitizeUser = (u) => {

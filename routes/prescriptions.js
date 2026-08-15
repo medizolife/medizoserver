@@ -588,16 +588,24 @@ router.post('/:id/test-reports', auth, async (req, res) => {
         console.log('[Prescriptions] D1 Test Report Image sync notice:', imgErr.message);
       }
 
-      const reportId = require('crypto').randomBytes(8).toString('hex');
-      const uploaderName = req.user.firstName 
-        ? `${req.user.firstName} ${req.user.lastName || ''}`.trim() 
-        : (req.user.name || (role === 'doctor' ? 'Doctor' : 'Patient'));
+      const rawPatientName = (
+        prescription.patientName || 
+        req.user.firstName || 
+        req.user.name || 
+        'PATIENT'
+      ).replace(/[^a-zA-Z0-9]/g, '');
+      const patient4 = (rawPatientName.substring(0, 4) || 'PATI').toUpperCase();
+      const uploadDateStr = new Date().toISOString().split('T')[0]; // e.g. 2026-08-15
+      const ext = path.extname(req.file.originalname) || (isPdf ? '.pdf' : '.png');
+      const cleanTest = (req.body.testName || 'REPORT').replace(/[^a-zA-Z0-9]/g, '');
+      const standardizedName = `${patient4}_${uploadDateStr}_${cleanTest}${ext}`;
 
       const newReport = {
         id: reportId,
         testName: req.body.testName || 'Diagnostic Test Report',
         filename,
-        originalName: req.file.originalname,
+        originalName: standardizedName,
+        userOriginalName: req.file.originalname,
         fileUrl,
         fileType: isPdf ? 'pdf' : 'image',
         mimeType: req.file.mimetype,
@@ -1120,7 +1128,7 @@ router.get(['/public/:id/download', '/public/:id/pdf'], async (req, res) => {
   } catch (error) {
     console.error('Public PDF download error:', error);
     if (!res.headersSent) {
-      res.status(500).json({ message: 'Server error generating PDF' });
+      res.status(500).json({ message: 'Server error generating PDF', error: error.message, stack: error.stack });
     }
   }
 });

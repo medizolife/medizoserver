@@ -102,7 +102,41 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Serve static files from uploads directory
+// Serve static files from uploads directory with D1 fallback for serverless deployments
+const Image = require('./models/ImageModel');
+app.get([
+  '/api/uploads/records/:filename',
+  '/uploads/records/:filename',
+  '/api/uploads/:folder/:filename',
+  '/uploads/:folder/:filename',
+  '/api/uploads/:filename',
+  '/uploads/:filename',
+  '/api/prescriptions/records/:filename',
+  '/prescriptions/records/:filename',
+  '/api/prescriptions/images/:filename',
+  '/prescriptions/images/:filename'
+], async (req, res) => {
+  try {
+    const { filename } = req.params;
+    const filePath = path.join(uploadsDir, 'records', filename);
+    if (fs.existsSync(filePath)) {
+      return res.sendFile(filePath);
+    }
+    const img = await Image.findOne({ filename });
+    if (img && img.data) {
+      res.set('Content-Type', img.mimeType || 'application/octet-stream');
+      res.set('Content-Disposition', 'inline');
+      res.set('Cache-Control', 'public, max-age=31536000');
+      res.set('Access-Control-Allow-Origin', '*');
+      return res.send(img.data);
+    }
+    return res.status(404).json({ message: 'File not found' });
+  } catch (err) {
+    console.error('Serve record file error:', err);
+    res.status(500).json({ message: 'Server error retrieving file' });
+  }
+});
+
 app.use('/uploads', express.static(uploadsDir));
 
 // Routes

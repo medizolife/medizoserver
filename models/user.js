@@ -269,6 +269,11 @@ const ALLOWED_USER_COLUMNS = new Set([
  */
 const updateUser = async (id, userData) => {
   try {
+    // Resolve canonical user ID first
+    const existing = await findUserById(id);
+    const targetId = existing?.id || id;
+    const targetEmail = existing?.email || id;
+
     // Handle password update
     if (userData.password) {
       const salt = await bcrypt.genSalt(10);
@@ -289,13 +294,14 @@ const updateUser = async (id, userData) => {
       values.push(value);
     }
 
-    if (setClauses.length === 0) return await findUserById(id);
+    if (setClauses.length === 0) return await findUserById(targetId);
 
     // Add updatedAt
     setClauses.push("updatedAt = datetime('now')");
-    values.push(id); // WHERE clause
+    values.push(targetId);
+    values.push(targetEmail);
 
-    const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = ? RETURNING *`;
+    const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = ? OR email = ? RETURNING *`;
     const { results } = await queryD1(sql, values);
 
     if (results && results.length > 0) {
@@ -303,7 +309,7 @@ const updateUser = async (id, userData) => {
     }
 
     // Fallback if D1 RETURNING * does not return rows in HTTP API response
-    return await findUserById(id);
+    return await findUserById(targetId);
   } catch (error) {
     console.error('D1 updateUser error:', error);
     return await findUserById(id);
@@ -358,11 +364,11 @@ const authenticateUser = async (email, password) => {
   }
 
   // Generate JWT token
-  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+  const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
   const token = jwt.sign(
     { id: user.id, role: user.role },
     jwtSecret,
-    { expiresIn: '1d' }
+    { expiresIn: '30d' }
   );
 
   return {
@@ -425,11 +431,11 @@ async function findOrCreateGoogleUser(googleUserInfo, role = null) {
     }
 
     // Generate JWT token
-    const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+    const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
     const token = jwt.sign(
       { id: user.id, role: user.role },
       jwtSecret,
-      { expiresIn: '1d' }
+      { expiresIn: '30d' }
     );
 
     return { user: sanitizeUser(user), token, isNewUser, requiresRoleSelection: false };
@@ -556,11 +562,11 @@ const authenticateUserByMobile = async (mobileNumber, dateOfBirth, password) => 
   }
 
   // Generate JWT token
-  const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
+  const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
   const token = jwt.sign(
     { id: user.id, role: user.role },
     jwtSecret,
-    { expiresIn: '1d' }
+    { expiresIn: '30d' }
   );
 
   return {

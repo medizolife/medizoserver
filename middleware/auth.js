@@ -16,9 +16,30 @@ const auth = async (req, res, next) => {
   }
   
   try {
-    // Verify token - use env variable or fallback secret
-    const jwtSecret = process.env.JWT_SECRET || 'healthcare_management_secret_key_2025';
-    const decoded = jwt.verify(token, jwtSecret);
+    // Verify token - support active secret and fallback secrets
+    const primarySecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
+    const fallbackSecrets = [
+      primarySecret,
+      'medizo_jwt_secret_key_2026_health',
+      'healthcare_management_secret_key_2025',
+      'medizo_jwt_secret_key_2025'
+    ];
+
+    let decoded = null;
+    let verifyError = null;
+
+    for (const secret of fallbackSecrets) {
+      try {
+        decoded = jwt.verify(token, secret);
+        if (decoded) break;
+      } catch (err) {
+        verifyError = err;
+      }
+    }
+
+    if (!decoded) {
+      throw verifyError || new Error('Token verification failed');
+    }
     
     // Get full user data (now async)
     const user = await findUserById(decoded.id);
@@ -33,8 +54,8 @@ const auth = async (req, res, next) => {
     req.user = userWithoutPassword;
     next();
   } catch (error) {
-    console.error('Auth middleware error:', error);
-    res.status(401).json({ message: 'Token is not valid' });
+    console.error('Auth middleware error:', error.message || error);
+    res.status(401).json({ message: 'Token is not valid or has expired' });
   }
 };
 

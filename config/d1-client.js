@@ -7,18 +7,20 @@
  * Endpoint: POST /client/v4/accounts/{account_id}/d1/database/{database_id}/query
  */
 
-const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
-const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
-const CLOUDFLARE_D1_DATABASE_ID = process.env.CLOUDFLARE_D1_DATABASE_ID;
-
-const D1_API_BASE = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/d1/database/${CLOUDFLARE_D1_DATABASE_ID}`;
+function getD1Config() {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '2f740823719b4ab11c6b134a71e7a3b9';
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN || '';
+  const dbId = process.env.CLOUDFLARE_D1_DATABASE_ID || '206ec373-b5bb-4ec4-8304-778692299181';
+  return { accountId, apiToken, dbId };
+}
 
 /**
  * Check if D1 credentials are configured
  * @returns {boolean}
  */
 function isD1Configured() {
-  return Boolean(CLOUDFLARE_ACCOUNT_ID && CLOUDFLARE_API_TOKEN && CLOUDFLARE_D1_DATABASE_ID);
+  const { accountId, apiToken, dbId } = getD1Config();
+  return Boolean(accountId && apiToken && dbId);
 }
 
 /**
@@ -28,15 +30,18 @@ function isD1Configured() {
  * @returns {Promise<{results: Array, meta: Object}>} Query results
  */
 async function queryD1(sql, params = []) {
-  if (!isD1Configured()) {
-    throw new Error('Cloudflare D1 credentials not configured. Set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_D1_DATABASE_ID in .env');
+  const { accountId, apiToken, dbId } = getD1Config();
+  if (!accountId || !apiToken || !dbId) {
+    throw new Error('Cloudflare D1 credentials not configured.');
   }
 
+  const d1ApiBase = `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/${dbId}`;
+
   try {
-    const response = await fetch(`${D1_API_BASE}/query`, {
+    const response = await fetch(`${d1ApiBase}/query`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
+        'Authorization': `Bearer ${apiToken}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ sql, params })

@@ -87,6 +87,67 @@ app.use(async (req, res, next) => {
   next();
 });
 
+const Image = require('../models/ImageModel');
+const uploadsDir = (process.env.VERCEL || typeof __dirname === 'undefined') 
+  ? '/tmp/uploads' 
+  : path.join(__dirname, '../uploads');
+
+// Universal file server (Disk + Cloudflare D1 fallback)
+const serveUploadedFile = async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    if (!filename) {
+      return res.status(400).json({ message: 'Filename required' });
+    }
+
+    // 1. Try local filesystem if available (Node.js environment)
+    if (typeof fs !== 'undefined' && fs.existsSync && typeof path !== 'undefined') {
+      const possiblePaths = [
+        path.join(uploadsDir, 'records', filename),
+        path.join(uploadsDir, filename),
+        req.params.folder ? path.join(uploadsDir, req.params.folder, filename) : null
+      ].filter(Boolean);
+
+      for (const p of possiblePaths) {
+        try {
+          if (fs.existsSync(p)) {
+            return res.sendFile(p);
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 2. Query Cloudflare D1 images table
+    const image = await Image.findOne({ filename });
+    if (image && image.data) {
+      res.set('Content-Type', image.mimeType || 'application/octet-stream');
+      res.set('Content-Disposition', 'inline');
+      res.set('Cache-Control', 'public, max-age=31536000');
+      res.set('Access-Control-Allow-Origin', '*');
+      return res.send(image.data);
+    }
+
+    return res.status(404).json({ message: 'File not found' });
+  } catch (err) {
+    console.error('Serve uploaded file error:', err);
+    return res.status(500).json({ message: 'Server error retrieving file' });
+  }
+};
+
+// Mount upload endpoints with and without /api prefix
+app.get([
+  '/api/uploads/records/:filename',
+  '/uploads/records/:filename',
+  '/api/uploads/:folder/:filename',
+  '/uploads/:folder/:filename',
+  '/api/uploads/:filename',
+  '/uploads/:filename',
+  '/api/prescriptions/records/:filename',
+  '/prescriptions/records/:filename',
+  '/api/prescriptions/images/:filename',
+  '/prescriptions/images/:filename'
+], serveUploadedFile);
+
 // Routes with /api prefix
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);

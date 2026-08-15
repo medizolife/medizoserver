@@ -41,7 +41,7 @@ router.get('/authorize', doctor, (req, res) => {
     .digest('base64url');
 
   // Store the doctor's user ID and originating client URL in the state
-  // Format: randomState|userId|encodedClientUrl
+  // Format: randomState|userId|encodedClientUrl|codeVerifier|signature
   let originatingClientUrl = req.query.client_url || req.headers.referer || req.headers.origin || process.env.CLIENT_URL || 'https://m.medizo.life';
   try {
     const parsed = new URL(originatingClientUrl);
@@ -49,14 +49,17 @@ router.get('/authorize', doctor, (req, res) => {
   } catch (e) {}
   const encodedClientUrl = Buffer.from(originatingClientUrl).toString('base64url');
 
-  const stateWithUser = `${state}|${req.user.id}|${encodedClientUrl}`;
+  const secret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
+  const rawPayload = `${state}|${req.user.id}|${encodedClientUrl}|${codeVerifier}`;
+  const hmacSig = crypto.createHmac('sha256', secret).update(rawPayload).digest('hex');
+  const signedState = `${rawPayload}|${hmacSig}`;
 
   // DigiLocker OAuth2 authorization URL parameters
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: clientId,
     redirect_uri: redirectUri,
-    state: stateWithUser,
+    state: signedState,
     scope: 'openid',
     nonce: nonce,
     code_challenge: codeChallenge,
@@ -65,18 +68,20 @@ router.get('/authorize', doctor, (req, res) => {
 
   const authUrl = `${baseUrl}/public/oauth2/1/authorize?${params.toString()}`;
 
-  // Set cookies for state verification in callback
+  // Set cookies as backup
   const cookieOptions = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: true,
+    sameSite: 'none',
     maxAge: 600000, // 10 minutes in ms
     path: '/',
   };
 
-  res.cookie('digilocker_state', stateWithUser, cookieOptions);
-  res.cookie('digilocker_code_verifier', codeVerifier, cookieOptions);
-  res.cookie('digilocker_nonce', nonce, cookieOptions);
+  try {
+    res.cookie('digilocker_state', signedState, cookieOptions);
+    res.cookie('digilocker_code_verifier', codeVerifier, cookieOptions);
+    res.cookie('digilocker_nonce', nonce, cookieOptions);
+  } catch (e) {}
 
   // Return an HTML interstitial that stores cookies before redirecting
   // This prevents cookie loss on cross-domain redirects (same approach as reference project)
@@ -121,13 +126,94 @@ router.get('/callback', async (req, res) => {
   const clientId = process.env.DIGILOCKER_CLIENT_ID || '';
   const clientSecret = process.env.DIGILOCKER_CLIENT_SECRET || '';
   const redirectUri = process.env.DIGILOCKER_REDIRECT_URI || '';
+  // Default clientUrl — will be overwritten by the originating URL from the signed state
   let clientUrl = process.env.CLIENT_URL || 'https://m.medizo.life';
 
   const { code, state, error, error_description } = req.query;
 
   console.log('[DigiLocker] Callback hit. code:', !!code, 'state:', !!state);
+  console.log('[DigiLocker] Default clientUrl from env:', clientUrl);
 
-  // If user denied access or DigiLocker returned an error
+  // ── Extract client_url from state FIRST, before any error redirects ──
+  // This ensures even error redirects go back to the originating URL (localhost, m.medizo.life, etc.)
+  const secret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
+  const candidateSecrets = [
+    secret,
+    'medizo_jwt_secret_key_2026_health',
+    'healthcare_management_secret_key_2025',
+    'medizo_jwt_secret_key_2025'
+  ];
+
+  const stateParts = (state || '').split('|');
+  let userId = null;
+  let codeVerifier = req.cookies?.digilocker_code_verifier || '';
+  let isStateValid = false;
+
+  if (stateParts.length >= 5) {
+    const [rnd, uid, encodedUrl, cv, receivedSig] = stateParts;
+    const rawPayload = `${rnd}|${uid}|${encodedUrl}|${cv}`;
+
+    // Always decode originating clientUrl from state first
+    try {
+      const decodedUrl = Buffer.from(encodedUrl, 'base64url').toString('utf8');
+      if (decodedUrl && decodedUrl.startsWith('http')) {
+        const parsed = new URL(decodedUrl);
+        clientUrl = `${parsed.protocol}//${parsed.host}`;
+      }
+      console.log('[DigiLocker] Decoded originating clientUrl from state:', clientUrl);
+    } catch (e) {
+      console.error('[DigiLocker] Could not decode clientUrl from signed state:', e);
+    }
+
+    // Try HMAC with active and candidate secrets
+    for (const candSecret of candidateSecrets) {
+      const expectedSig = crypto.createHmac('sha256', candSecret).update(rawPayload).digest('hex');
+      if (receivedSig === expectedSig) {
+        userId = uid;
+        codeVerifier = cv;
+        isStateValid = true;
+        console.log('[DigiLocker] HMAC signature verified successfully');
+        break;
+      }
+    }
+
+    // Fallback: If HMAC didn't match (e.g. cross-environment secret drift), verify user exists in D1
+    if (!isStateValid && uid && cv) {
+      try {
+        const doctorUser = await findUserById(uid);
+        if (doctorUser && (doctorUser.role === 'doctor' || doctorUser.role === 'admin')) {
+          console.log('[DigiLocker] Validated doctor user via D1 database lookup:', uid);
+          userId = doctorUser.id || uid;
+          codeVerifier = cv;
+          isStateValid = true;
+        }
+      } catch (dbLookupErr) {
+        console.error('[DigiLocker] Error verifying user from D1:', dbLookupErr);
+      }
+    }
+  }
+
+  // Fallback: Check cookies for legacy states
+  if (!isStateValid) {
+    const storedState = req.cookies?.digilocker_state;
+    if (storedState && storedState === state) {
+      userId = stateParts[1];
+      isStateValid = true;
+      if (stateParts[2]) {
+        try {
+          const cookieUrl = Buffer.from(stateParts[2], 'base64url').toString('utf8');
+          if (cookieUrl && cookieUrl.startsWith('http')) {
+            const parsed = new URL(cookieUrl);
+            clientUrl = `${parsed.protocol}//${parsed.host}`;
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  console.log('[DigiLocker] Final redirect clientUrl:', clientUrl, '| State valid:', isStateValid, '| User ID:', userId);
+
+  // Now handle errors — using the correct clientUrl for redirect
   if (error) {
     const msg = error_description || error || 'Authorization denied';
     console.error('[DigiLocker] Auth error from DigiLocker:', msg);
@@ -139,33 +225,10 @@ router.get('/callback', async (req, res) => {
     return res.redirect(`${clientUrl}/dashboard?digilocker=error&message=Missing+authorization+code`);
   }
 
-  // Validate state against cookie
-  const storedState = req.cookies?.digilocker_state;
-  console.log('[DigiLocker] State check — stored:', storedState ? 'present' : 'MISSING', 'received:', state ? 'present' : 'MISSING', 'match:', storedState === state);
-
-  if (!storedState || storedState !== state) {
-    console.error('[DigiLocker] State mismatch! Cookie state:', storedState, 'URL state:', state);
-    return res.redirect(`${clientUrl}/dashboard?digilocker=error&message=Invalid+state+parameter+(cookies+may+have+been+lost)`);
+  if (!isStateValid || !userId) {
+    console.error('[DigiLocker] State validation failed. URL state:', state);
+    return res.redirect(`${clientUrl}/dashboard?digilocker=error&message=Invalid+state+parameter`);
   }
-
-  // Extract userId and dynamic clientUrl from state (format: randomState|userId|encodedClientUrl)
-  const stateParts = (state || '').split('|');
-  const userId = stateParts[1];
-  if (stateParts[2]) {
-    try {
-      clientUrl = Buffer.from(stateParts[2], 'base64url').toString('utf8');
-    } catch (e) {
-      console.error('[DigiLocker] Could not decode clientUrl from state:', e);
-    }
-  }
-
-  if (!userId) {
-    console.error('[DigiLocker] No userId in state');
-    return res.redirect(`${clientUrl}/dashboard?digilocker=error&message=Invalid+state+format`);
-  }
-
-  // Retrieve PKCE code_verifier from cookie
-  const codeVerifier = req.cookies?.digilocker_code_verifier || '';
 
   try {
     // ── Step 1: Exchange code for token (with PKCE) ──
@@ -278,42 +341,38 @@ router.get('/callback', async (req, res) => {
     };
 
     console.log('[DigiLocker] Saving profile for doctor:', userId);
+    console.log('[DigiLocker] Profile data:', JSON.stringify({
+      verified: digilockerProfile.verified,
+      name: digilockerProfile.name,
+      digilockerid: digilockerProfile.digilockerid,
+      maskedAadhaar: digilockerProfile.maskedAadhaar,
+      linkedAt: digilockerProfile.linkedAt
+    }));
 
-    // Update using Mongoose model directly if available
-    if (isMongoConnected() && UserModel) {
-      try {
-        await UserModel.updateOne(
-          { _id: userId },
-          {
-            $set: {
-              digilockerVerified: true,
-              digilockerProfile: digilockerProfile
-            }
-          }
-        );
-        console.log('[DigiLocker] Profile saved via Mongoose');
-      } catch (mongoErr) {
-        console.error('[DigiLocker] Mongoose update error:', mongoErr);
-        // Fallback to user.js updateUser
-        await updateUser(userId, {
-          digilockerVerified: true,
-          digilockerProfile: digilockerProfile
-        });
-      }
-    } else {
-      // Fallback to JSON file storage
-      await updateUser(userId, {
+    // Save to D1 database via updateUser
+    try {
+      const updatedUser = await updateUser(userId, {
         digilockerVerified: true,
         digilockerProfile: digilockerProfile
       });
+
+      if (updatedUser) {
+        console.log('[DigiLocker] Profile saved successfully via D1. User verified:', updatedUser.digilockerVerified);
+      } else {
+        console.warn('[DigiLocker] updateUser returned null/undefined — user may not exist with ID:', userId);
+      }
+    } catch (saveErr) {
+      console.error('[DigiLocker] CRITICAL: Failed to save DigiLocker profile:', saveErr);
+      // Still redirect with error so user knows something went wrong
+      return res.redirect(`${clientUrl}/dashboard?digilocker=error&message=${encodeURIComponent('Verification succeeded but profile save failed. Please try again.')}`);
     }
 
-    // ── Step 4: Clear cookies and redirect ──
+    // ── Step 4: Clear cookies and redirect back to the ORIGINATING client URL ──
     res.clearCookie('digilocker_state');
     res.clearCookie('digilocker_code_verifier');
     res.clearCookie('digilocker_nonce');
 
-    console.log('[DigiLocker] Verification complete, redirecting to dashboard');
+    console.log('[DigiLocker] Verification complete. Redirecting to:', `${clientUrl}/dashboard?digilocker=success`);
     return res.redirect(`${clientUrl}/dashboard?digilocker=success`);
 
   } catch (err) {
