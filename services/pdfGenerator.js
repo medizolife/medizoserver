@@ -722,24 +722,38 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       // ─── 7. PRESCRIBED MEDICATIONS ───────────────────────────────────
       if (meds.length > 0) {
-        const col = {
-          num:   { x: M, w: 28 },
-          name:  { x: M + 28, w: 142 },
-          dos:   { x: M + 170, w: 95 },
-          dur:   { x: M + 265, w: 90 },
-          instr: { x: M + 355, w: CW - 355 }
-        };
-
         const buildInstrStr = (med) => {
           const parts = [];
           const t = safeStr(med.timing);
           const mr = safeStr(med.mealRelation);
           const ins = safeStr(med.instructions);
-          if (t) parts.push(t);
-          if (mr) parts.push(mr);
-          if (ins) parts.push(ins);
+          if (t && t !== '-') parts.push(t);
+          if (mr && mr !== '-') parts.push(mr);
+          if (ins && ins !== '-') parts.push(ins);
           return parts.length > 0 ? parts.join(' | ') : '-';
         };
+
+        const hasAnyMedInstr = meds.some(m => {
+          const s = buildInstrStr(m);
+          return s && s !== '-';
+        });
+
+        const col = hasAnyMedInstr ? {
+          num:   { x: M, w: 28 },
+          name:  { x: M + 28, w: 142 },
+          dos:   { x: M + 170, w: 95 },
+          dur:   { x: M + 265, w: 90 },
+          instr: { x: M + 355, w: CW - 355 }
+        } : {
+          num:   { x: M, w: 28 },
+          name:  { x: M + 28, w: 217 },
+          dos:   { x: M + 245, w: 135 },
+          dur:   { x: M + 380, w: CW - 380 }
+        };
+
+        const divCols = hasAnyMedInstr
+          ? [M, col.name.x, col.dos.x, col.dur.x, col.instr.x, PW - M]
+          : [M, col.name.x, col.dos.x, col.dur.x, PW - M];
 
         const buildDosStr = (med) => {
           let s = safeStr(med.dosage);
@@ -770,7 +784,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         meds.forEach((med) => {
           doc.font('Helvetica').fontSize(8.5);
           const instrStr = buildInstrStr(med);
-          const instrH = doc.heightOfString(instrStr, { width: col.instr.w - 8 });
+          const instrH = hasAnyMedInstr ? doc.heightOfString(instrStr, { width: col.instr.w - 8 }) : 0;
           const dosStr = buildDosStr(med);
           const dosH = doc.heightOfString(dosStr, { width: col.dos.w - 8 });
           const durStr = buildDurStr(med);
@@ -802,12 +816,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         doc.text('Medicine Name',   col.name.x + 4,  y + 4.5, { width: col.name.w - 8 });
         doc.text('Dosage',          col.dos.x + 4,   y + 4.5, { width: col.dos.w - 8,   align: 'center' });
         doc.text('Duration / Qty',  col.dur.x + 4,   y + 4.5, { width: col.dur.w - 8,   align: 'center' });
-        doc.text('Instructions',    col.instr.x + 4, y + 4.5, { width: col.instr.w - 8 });
+        if (hasAnyMedInstr) {
+          doc.text('Instructions',    col.instr.x + 4, y + 4.5, { width: col.instr.w - 8 });
+        }
 
         doc.strokeColor(C.primary).lineWidth(0.6);
         doc.moveTo(M, y).lineTo(PW - M, y).stroke();
         doc.moveTo(M, y + 18).lineTo(PW - M, y + 18).stroke();
-        [M, col.name.x, col.dos.x, col.dur.x, col.instr.x, PW - M].forEach(cx => {
+        divCols.forEach(cx => {
           doc.moveTo(cx, y).lineTo(cx, y + 18).stroke();
         });
         y += 18;
@@ -816,7 +832,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         meds.forEach((med, idx) => {
           doc.font('Helvetica').fontSize(8.5);
           const instrStr = buildInstrStr(med);
-          const instrH = doc.heightOfString(instrStr, { width: col.instr.w - 8 });
+          const instrH = hasAnyMedInstr ? doc.heightOfString(instrStr, { width: col.instr.w - 8 }) : 0;
           const dosStr = buildDosStr(med);
           const dosH = doc.heightOfString(dosStr, { width: col.dos.w - 8 });
           const durStr = buildDurStr(med);
@@ -848,12 +864,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
           doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
             .text(durStr, col.dur.x + 4, rowY + 5, { width: col.dur.w - 8, align: 'center' });
 
-          doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-            .text(instrStr, col.instr.x + 4, rowY + 5, { width: col.instr.w - 8 });
+          if (hasAnyMedInstr) {
+            doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
+              .text(instrStr, col.instr.x + 4, rowY + 5, { width: col.instr.w - 8 });
+          }
 
           doc.strokeColor(C.border).lineWidth(0.3);
           doc.moveTo(M, rowY + rowH).lineTo(PW - M, rowY + rowH).stroke();
-          [M, col.name.x, col.dos.x, col.dur.x, col.instr.x, PW - M].forEach(cx => {
+          divCols.forEach(cx => {
             doc.moveTo(cx, rowY).lineTo(cx, rowY + rowH).stroke();
           });
 
@@ -872,20 +890,34 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       // ─── 8. INVESTIGATIONS & DIAGNOSTIC TESTS REQUIRED ───────────────
       if (invList.length > 0) {
-        const invCol = {
-          num:    { x: M, w: 28 },
-          name:   { x: M + 28, w: 150 },
-          cond:   { x: M + 178, w: 105 },
-          reason: { x: M + 283, w: 110 },
-          instr:  { x: M + 393, w: CW - 393 }
-        };
-
         const buildCondStr = (inv) => {
           const parts = [];
           if (inv.priority) parts.push(`Priority: ${safeStr(inv.priority).toUpperCase()}`);
           if (inv.fasting) parts.push(`Fasting: ${safeStr(inv.fasting)}`);
           return parts.length > 0 ? parts.join('\n') : 'Routine';
         };
+
+        const hasAnyInvInstr = invList.some(inv => {
+          const ins = safeStr(inv.specialInstructions);
+          return ins && ins !== '-' && ins.toLowerCase() !== 'none';
+        });
+
+        const invCol = hasAnyInvInstr ? {
+          num:    { x: M, w: 28 },
+          name:   { x: M + 28, w: 150 },
+          cond:   { x: M + 178, w: 105 },
+          reason: { x: M + 283, w: 110 },
+          instr:  { x: M + 393, w: CW - 393 }
+        } : {
+          num:    { x: M, w: 28 },
+          name:   { x: M + 28, w: 200 },
+          cond:   { x: M + 228, w: 135 },
+          reason: { x: M + 363, w: CW - 363 }
+        };
+
+        const invDivCols = hasAnyInvInstr
+          ? [M, invCol.name.x, invCol.cond.x, invCol.reason.x, invCol.instr.x, PW - M]
+          : [M, invCol.name.x, invCol.cond.x, invCol.reason.x, PW - M];
 
         let invTotalH = 24 + 18;
         invList.forEach((inv) => {
@@ -899,7 +931,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
           doc.font('Helvetica').fontSize(8.5);
           const condH = doc.heightOfString(condStr, { width: invCol.cond.w - 8 });
           const reasonH = doc.heightOfString(reasonStr, { width: invCol.reason.w - 8 });
-          const instrH = doc.heightOfString(instrStr, { width: invCol.instr.w - 8 });
+          const instrH = hasAnyInvInstr ? doc.heightOfString(instrStr, { width: invCol.instr.w - 8 }) : 0;
 
           const rowH = Math.max(20, nameH + 6, condH + 6, reasonH + 6, instrH + 6);
           invTotalH += rowH;
@@ -918,12 +950,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         doc.text('Investigation / Test', invCol.name.x + 4,   y + 4.5, { width: invCol.name.w - 8 });
         doc.text('Priority & Fasting',   invCol.cond.x + 4,   y + 4.5, { width: invCol.cond.w - 8,   align: 'center' });
         doc.text('Clinical Reason',      invCol.reason.x + 4, y + 4.5, { width: invCol.reason.w - 8 });
-        doc.text('Special Instructions', invCol.instr.x + 4,  y + 4.5, { width: invCol.instr.w - 8 });
+        if (hasAnyInvInstr) {
+          doc.text('Special Instructions', invCol.instr.x + 4,  y + 4.5, { width: invCol.instr.w - 8 });
+        }
 
         doc.strokeColor(C.primary).lineWidth(0.6);
         doc.moveTo(M, y).lineTo(PW - M, y).stroke();
         doc.moveTo(M, y + 18).lineTo(PW - M, y + 18).stroke();
-        [M, invCol.name.x, invCol.cond.x, invCol.reason.x, invCol.instr.x, PW - M].forEach(cx => {
+        invDivCols.forEach(cx => {
           doc.moveTo(cx, y).lineTo(cx, y + 18).stroke();
         });
         y += 18;
@@ -939,7 +973,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
           doc.font('Helvetica').fontSize(8.5);
           const condH = doc.heightOfString(condStr, { width: invCol.cond.w - 8 });
           const reasonH = doc.heightOfString(reasonStr, { width: invCol.reason.w - 8 });
-          const instrH = doc.heightOfString(instrStr, { width: invCol.instr.w - 8 });
+          const instrH = hasAnyInvInstr ? doc.heightOfString(instrStr, { width: invCol.instr.w - 8 }) : 0;
 
           const rowH = Math.max(20, nameH + 6, condH + 6, reasonH + 6, instrH + 6);
           const rowY = y;
@@ -960,12 +994,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
           doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
             .text(reasonStr, invCol.reason.x + 4, rowY + 5, { width: invCol.reason.w - 8 });
 
-          doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-            .text(instrStr, invCol.instr.x + 4, rowY + 5, { width: invCol.instr.w - 8 });
+          if (hasAnyInvInstr) {
+            doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
+              .text(instrStr, invCol.instr.x + 4, rowY + 5, { width: invCol.instr.w - 8 });
+          }
 
           doc.strokeColor(C.border).lineWidth(0.3);
           doc.moveTo(M, rowY + rowH).lineTo(PW - M, rowY + rowH).stroke();
-          [M, invCol.name.x, invCol.cond.x, invCol.reason.x, invCol.instr.x, PW - M].forEach(cx => {
+          invDivCols.forEach(cx => {
             doc.moveTo(cx, rowY).lineTo(cx, rowY + rowH).stroke();
           });
 
