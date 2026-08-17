@@ -154,7 +154,7 @@ const PW = 595.28;
 const PH = 841.89;
 const M = 40;
 const CW = PW - 2 * M;
-const FOOTER_ZONE = 60;          // space reserved at page bottom for footer
+const FOOTER_ZONE = 36;          // space reserved at page bottom for footer
 const maxY = PH - FOOTER_ZONE;
 
 // ====================================================================
@@ -163,7 +163,11 @@ const maxY = PH - FOOTER_ZONE;
 async function generatePrescriptionPDF(res, prescriptionId, prescription, patient, doctor) {
   return new Promise(async (resolve, reject) => {
     try {
-      const doc = new PDFDocument({ margin: M, size: 'A4' });
+      const doc = new PDFDocument({
+        margins: { top: M, bottom: 0, left: M, right: M },
+        size: 'A4',
+        bufferPages: true
+      });
       const buffers = [];
 
       doc.on('data', chunk => buffers.push(chunk));
@@ -284,21 +288,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     return String(val);
   };
 
-  const addFooter = () => {
-    const fY = PH - FOOTER_ZONE + 8;
-    doc.moveTo(M, fY).lineTo(PW - M, fY).strokeColor('#AAAAAA').lineWidth(0.5).stroke();
-    doc.font('Helvetica-Oblique').fontSize(8.5).fillColor('#666666')
-      .text('For verification, scan the QR code to get the Prescription ID on medizo.life', M, fY + 6, { width: CW, align: 'center' });
-    if (emergLine) {
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
-        .text(`24x7 Emergency Helpline: ${emergLine}`, M, fY + 18, { width: CW, align: 'center' });
-    }
+  const newPage = () => {
+    doc.addPage({ margins: { top: M, bottom: 0, left: M, right: M } });
+    pg++;
+    y = M;
   };
 
-  const newPage = () => { addFooter(); doc.addPage(); pg++; y = M; };
-
   /** Ensure `needed` vertical pixels are available, break page if not */
-  const ensureSpace = (needed = 60) => { if (y + needed > maxY && y > M + 5) newPage(); };
+  const ensureSpace = (needed = 40) => { if (y + needed > maxY && y > M + 5) newPage(); };
 
   /** Section title bar (dark background, white text) */
   const titleBar = (title) => {
@@ -1171,11 +1168,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const stampBuf = await loadImageBuffer(doctor.stamp);
   const hasSignatureImg = !!signatureBuf;
   const hasStampImg = !!stampBuf;
-  const sigStampH = hasSignatureImg ? (hasStampImg ? 155 : 130) : (hasStampImg ? 130 : 100);
+  const sigStampH = hasSignatureImg ? (hasStampImg ? 85 : 75) : (hasStampImg ? 75 : 60);
   stickyTotalH += sigStampH;
 
   // Ensure all sticky sections fit on the same page
-  ensureSpace(stickyTotalH + 20);
+  ensureSpace(stickyTotalH + 5);
 
   // ─── FOLLOW-UP INFORMATION ─────────────────────────────────────
   if (hasFollowUp) {
@@ -1319,8 +1316,27 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     y = siy + 18;
   }
 
-  // page footer on last page
-  addFooter();
+  // Apply sticky page footer to all pages at the exact bottom margin
+  const range = doc.bufferedPageRange();
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    const fY = PH - 26;
+    doc.moveTo(M, fY).lineTo(PW - M, fY).strokeColor('#CCCCCC').lineWidth(0.5).stroke();
+    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#666666')
+      .text('For verification, scan the QR code to get the Prescription ID on medizo.life', M, fY + 5, {
+        width: CW,
+        align: 'center',
+        lineBreak: false
+      });
+    if (emergLine) {
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text)
+        .text(`24x7 Emergency Helpline: ${emergLine}`, M, fY + 14, {
+          width: CW,
+          align: 'center',
+          lineBreak: false
+        });
+    }
+  }
 
   doc.end();
     } catch (err) {
