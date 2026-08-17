@@ -54,7 +54,10 @@ const connectDB = async () => {
         'ALTER TABLE users ADD COLUMN stamp TEXT DEFAULT "";',
         'ALTER TABLE users ADD COLUMN nurseLicenseNumber TEXT DEFAULT "";',
         'ALTER TABLE users ADD COLUMN nurseQualifications TEXT DEFAULT "";',
-        'ALTER TABLE users ADD COLUMN nurseSpecialization TEXT DEFAULT "";'
+        'ALTER TABLE users ADD COLUMN nurseSpecialization TEXT DEFAULT "";',
+        'ALTER TABLE users ADD COLUMN guardianId TEXT DEFAULT "";',
+        'ALTER TABLE users ADD COLUMN digilockerVerified INTEGER DEFAULT 0;',
+        'ALTER TABLE users ADD COLUMN digilockerProfile TEXT DEFAULT \'{"verified":false,"name":"","dob":"","gender":"","email":"","mobile":"","maskedAadhaar":"","digilockerid":"","referenceKey":"","eaadhaar":"","panNumber":"","drivingLicence":""}\';'
       ];
       for (const colSql of alterCols) {
         try {

@@ -17,6 +17,13 @@ const prescriptionRoutes = require('../routes/prescriptions');
 const userRoutes = require('../routes/users');
 const digilockerRoutes = require('../routes/digilocker');
 const adminRoutes = require('../routes/admin');
+const familyProfileRoutes = require('../routes/familyProfiles');
+const billingRoutes = require('../routes/billing');
+const networkRoutes = require('../routes/network');
+const referralRoutes = require('../routes/referrals');
+const homeCareRoutes = require('../routes/homeCare');
+const nurseAssignmentRoutes = require('../routes/nurseAssignments');
+const nurseScheduleRoutes = require('../routes/nurseSchedules');
 
 // Import user model for demo users
 const { createDemoUsers } = require('../models/user');
@@ -156,6 +163,13 @@ app.use('/api/patients', patientRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/digilocker', digilockerRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/family-profiles', familyProfileRoutes);
+app.use('/api/billing', billingRoutes);
+app.use('/api/network', networkRoutes);
+app.use('/api/referrals', referralRoutes);
+app.use('/api/home-care', homeCareRoutes);
+app.use('/api/nurse-assignments', nurseAssignmentRoutes);
+app.use('/api/nurse-schedules', nurseScheduleRoutes);
 
 // Routes without /api prefix (for Vercel rewrites)
 app.use('/auth', authRoutes);
@@ -165,6 +179,13 @@ app.use('/patients', patientRoutes);
 app.use('/prescriptions', prescriptionRoutes);
 app.use('/digilocker', digilockerRoutes);
 app.use('/admin', adminRoutes);
+app.use('/family-profiles', familyProfileRoutes);
+app.use('/billing', billingRoutes);
+app.use('/network', networkRoutes);
+app.use('/referrals', referralRoutes);
+app.use('/home-care', homeCareRoutes);
+app.use('/nurse-assignments', nurseAssignmentRoutes);
+app.use('/nurse-schedules', nurseScheduleRoutes);
 
 // Root & Health check
 app.get('/api/health', async (req, res) => {
