@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { auth, patient, doctor } = require('../middleware/auth');
+const { auth, patient, doctor, doctorOrAdmin } = require('../middleware/auth');
 const { findUserById } = require('../models/user');
 const {
   createFamilyProfile,
@@ -250,6 +250,72 @@ router.get('/account/:accountId', doctor, async (req, res) => {
     res.json({ profiles });
   } catch (error) {
     console.error('Get account family profiles error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+/**
+ * @route   POST /api/family-profiles/account/:accountId
+ * @desc    Add a new family member profile under a patient account (Doctor/Admin access)
+ * @access  Private (Doctor or Admin)
+ */
+router.post('/account/:accountId', doctorOrAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    const {
+      relationship, firstName, lastName,
+      dateOfBirth, gender, phone, address, bloodType,
+      allergies, diseaseHistory, chronicConditions, medicalHistory, emergencyContact
+    } = req.body;
+
+    if (!firstName || !firstName.trim()) {
+      return res.status(400).json({ message: 'First name is required' });
+    }
+    if (!lastName || !lastName.trim()) {
+      return res.status(400).json({ message: 'Last name is required' });
+    }
+    if (!relationship || !relationship.trim()) {
+      return res.status(400).json({ message: 'Relationship is required' });
+    }
+
+    const validRelationships = ['spouse', 'parent', 'child', 'sibling', 'other'];
+    if (!validRelationships.includes(relationship)) {
+      return res.status(400).json({ message: `Invalid relationship. Must be one of: ${validRelationships.join(', ')}` });
+    }
+
+    const userData = await findUserById(accountId);
+    if (!userData || userData.role !== 'patient') {
+      return res.status(404).json({ message: 'Patient account not found' });
+    }
+
+    await ensureSelfProfile(accountId, userData);
+
+    const newProfile = await createFamilyProfile({
+      accountId,
+      relationship,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      dateOfBirth: dateOfBirth || '',
+      gender: gender || '',
+      phone: phone || '',
+      address: address || '',
+      bloodType: bloodType || '',
+      allergies: allergies || { environmental: [], food: [], drugs: [], other: [] },
+      diseaseHistory: diseaseHistory || [],
+      chronicConditions: chronicConditions || [],
+      medicalHistory: medicalHistory || '',
+      emergencyContact: emergencyContact || { name: '', relationship: '', phone: '' }
+    });
+
+    console.log('Doctor created family profile:', newProfile.id, 'for account:', accountId, '→', newProfile.patientDisplayId);
+    res.status(201).json({ profile: newProfile });
+  } catch (error) {
+    console.error('Doctor create family profile error:', error);
+    if (error.message?.includes('Maximum')) {
+      return res.status(400).json({ message: error.message });
+    }
+    if (error.message?.includes('already exists')) {
+      return res.status(400).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Server error' });
   }
 });
