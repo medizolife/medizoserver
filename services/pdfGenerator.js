@@ -372,24 +372,25 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const rawDocAddress = doctor.address || doctor.clinicAddress || prescription.doctorAddress || prescription.clinicAddress || '';
   const docAddress = formatCityState(rawDocAddress, doctor.city || prescription.doctorCity, doctor.state || prescription.doctorState);
 
-  doc.font('Helvetica-Bold').fontSize(15).fillColor(C.primary)
-    .text(doctorDisplayName, M + 10, y + 8, { width: CW * 0.55 });
+  doc.font('Helvetica-Bold').fontSize(14).fillColor(C.primary);
+  const nameW = doc.widthOfString(doctorDisplayName);
+  doc.text(doctorDisplayName, M + 10, y + 9);
 
-  let hY = y + 26;
   if (docSpecialization) {
-    doc.font('Helvetica-Oblique').fontSize(9.5).fillColor(C.text)
-      .text(docSpecialization, M + 10, hY, { width: CW * 0.55 });
-    hY += 13;
+    doc.font('Helvetica-Oblique').fontSize(10).fillColor('#444444')
+      .text(`  |  ${docSpecialization}`, M + 10 + nameW, y + 11.5, { width: Math.max(120, CW * 0.62 - nameW) });
   }
+
+  let hY = y + 29;
   if (docRegNo) {
     doc.font('Helvetica').fontSize(9).fillColor(C.text)
       .text(`Reg. No: ${docRegNo}`, M + 10, hY);
-    hY += 12;
+    hY += 13;
   }
   if (drPhone) {
     doc.font('Helvetica').fontSize(9).fillColor(C.text)
       .text(`Phone: ${drPhone}`, M + 10, hY, { width: CW * 0.6 });
-    hY += 12;
+    hY += 13;
   }
   if (docAddress) {
     doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
