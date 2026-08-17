@@ -302,11 +302,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
   /** Section title bar (dark background, white text) */
   const titleBar = (title) => {
-    ensureSpace(30);
-    doc.rect(M, y, CW, 20).fill(C.section);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(C.white)
-      .text(title, M + 8, y + 5, { width: CW - 16, lineBreak: false });
-    y += 24;
+    ensureSpace(25);
+    doc.rect(M, y, CW, 18).fill(C.section);
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor(C.white)
+      .text(title, M + 8, y + 4.5, { width: CW - 16, lineBreak: false });
+    y += 20;
   };
 
   /** Bold label + value pair at (x, atY) */
@@ -355,10 +355,6 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   // ================================================================
 
   // ─── HEADER BOX ────────────────────────────────────────────────
-  const hdrH = 80;
-  doc.roundedRect(M, y, CW, hdrH, 4).fillAndStroke(C.hdrBg, C.primary);
-  doc.lineWidth(1.5);
-
   const docFirstName = (doctor.firstName || prescription.doctorName?.split(' ')[0] || '').trim();
   const docLastName = (doctor.lastName || prescription.doctorName?.split(' ').slice(1).join(' ') || '').trim();
   let doctorDisplayName = `${docFirstName} ${docLastName}`.trim() || prescription.doctorName || 'Attending Physician';
@@ -372,40 +368,49 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const rawDocAddress = doctor.address || doctor.clinicAddress || prescription.doctorAddress || prescription.clinicAddress || '';
   const docAddress = formatCityState(rawDocAddress, doctor.city || prescription.doctorCity, doctor.state || prescription.doctorState);
 
-  doc.font('Helvetica-Bold').fontSize(14).fillColor(C.primary);
+  // Measure text height to dynamically size the header box without empty white space
+  let docLines = 1; // Dr. Name + Specialization
+  if (docRegNo) docLines++;
+  if (drPhone) docLines++;
+  if (docAddress) docLines++;
+
+  const clinicLogoBuf = await loadImageBuffer(doctor.clinicLogo);
+  const hdrH = clinicLogoBuf ? Math.max(54, docLines * 12.5 + 14, 58) : Math.max(48, docLines * 12.5 + 12);
+
+  doc.roundedRect(M, y, CW, hdrH, 3).fillAndStroke(C.hdrBg, C.primary);
+  doc.lineWidth(1.2);
+
+  doc.font('Helvetica-Bold').fontSize(13.5).fillColor(C.primary);
   const nameW = doc.widthOfString(doctorDisplayName);
-  doc.text(doctorDisplayName, M + 10, y + 9);
+  doc.text(doctorDisplayName, M + 8, y + 7);
 
   if (docSpecialization) {
-    doc.font('Helvetica-Oblique').fontSize(10).fillColor('#444444')
-      .text(`  |  ${docSpecialization}`, M + 10 + nameW, y + 11.5, { width: Math.max(120, CW * 0.62 - nameW) });
+    doc.font('Helvetica-Oblique').fontSize(9.5).fillColor('#444444')
+      .text(`  |  ${docSpecialization}`, M + 8 + nameW, y + 9.5, { width: Math.max(120, CW * 0.62 - nameW) });
   }
 
-  let hY = y + 29;
+  let hY = y + 22;
   if (docRegNo) {
-    doc.font('Helvetica').fontSize(9).fillColor(C.text)
-      .text(`Reg. No: ${docRegNo}`, M + 10, hY);
-    hY += 13;
+    doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
+      .text(`Reg. No: ${docRegNo}`, M + 8, hY);
+    hY += 11.5;
   }
   if (drPhone) {
-    doc.font('Helvetica').fontSize(9).fillColor(C.text)
-      .text(`Phone: ${drPhone}`, M + 10, hY, { width: CW * 0.6 });
-    hY += 13;
+    doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
+      .text(`Phone: ${drPhone}`, M + 8, hY, { width: CW * 0.6 });
+    hY += 11.5;
   }
   if (docAddress) {
     doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-      .text(`Address: ${docAddress}`, M + 10, hY, { width: CW * 0.6 });
+      .text(`Address: ${docAddress}`, M + 8, hY, { width: CW * 0.6 });
   }
 
   // Right side – clinic logo (or clinic name fallback)
-  const clinicLogoBuf = await loadImageBuffer(doctor.clinicLogo);
-
   if (clinicLogoBuf) {
     try {
-      // Fit the logo into the right portion of the header box
-      const logoMaxW = 120, logoMaxH = 65;
+      const logoMaxW = 110, logoMaxH = hdrH - 10;
       const logoX = PW - M - logoMaxW - 8;
-      const logoY = y + 6;
+      const logoY = y + 5;
       doc.image(clinicLogoBuf, logoX, logoY, {
         fit: [logoMaxW, logoMaxH],
         align: 'center',
@@ -413,122 +418,139 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       });
     } catch (logoErr) {
       console.error('Clinic logo render error:', logoErr);
-      // fallback to clinic name text
       const clinicName = doctor.clinicName || '';
       if (clinicName) {
-        doc.font('Helvetica-Bold').fontSize(14).fillColor(C.primary)
-          .text(clinicName, M, y + 20, { width: CW - 10, align: 'right' });
+        doc.font('Helvetica-Bold').fontSize(13).fillColor(C.primary)
+          .text(clinicName, M, y + 14, { width: CW - 10, align: 'right' });
       }
     }
   } else {
-    // No logo uploaded – show clinic name if available
     const clinicName = doctor.clinicName || '';
     if (clinicName) {
-      doc.font('Helvetica-Bold').fontSize(14).fillColor(C.primary)
-        .text(clinicName, M, y + 20, { width: CW - 10, align: 'right' });
+      doc.font('Helvetica-Bold').fontSize(13).fillColor(C.primary)
+        .text(clinicName, M, y + 14, { width: CW - 10, align: 'right' });
     }
   }
 
-  y += hdrH + 8;
+  y += hdrH + 6;
 
   // ─── PRESCRIPTION ID + QR ──────────────────────────────────────
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
-    .text('Prescription ID:', M, y, { continued: true });
+  const rxY = y;
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
+    .text('Prescription ID:', M, rxY, { continued: true });
   doc.font('Courier').text(`  ${rxId}`);
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
-    .text('Date & Time:', M, y + 15, { continued: true });
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
+    .text('Date & Time:', M, rxY + 12, { continued: true });
   doc.font('Helvetica').text(`      ${fDate}, ${fTime}`);
 
-  // QR code – rendered to the right of the prescription ID / date lines
-  const qrSize = 80;  // PDF points (~150% of original)
+  // QR code – compact 42px right-aligned
+  const qrSize = 42;
   let qrRendered = false;
   try {
-    const qrPayload = prescriptionId;  // Encode only the MongoDB _id for verification
+    const qrPayload = prescriptionId;
     const qrUrl = await QRCode.toDataURL(qrPayload, {
-      width: 400,
+      width: 200,
       margin: 1,
       color: { dark: '#000000', light: '#FFFFFF' },
       errorCorrectionLevel: 'M'
     });
-    doc.image(qrUrl, PW - M - qrSize - 5, y - 5, { width: qrSize, height: qrSize });
+    doc.image(qrUrl, PW - M - qrSize - 4, rxY - 2, { width: qrSize, height: qrSize });
     qrRendered = true;
   } catch (e) { console.error('QR generation error:', e); }
 
-  // Advance y past whichever is taller: the two text lines (30px) or the QR code
-  y += qrRendered ? (qrSize + 8) : 35;
+  y = rxY + qrSize + 5;
 
-  // ─── PATIENT INFORMATION ───────────────────────────────────────
+  // ─── PATIENT INFORMATION (COMPACT 2-COLUMN) ────────────────────
   {
-    // Pre-calculate the box height so we can draw bg FIRST, then text on top
-    const L1 = M + 10, L2 = M + CW * 0.55;
-    let rows = 2; // Name + Age/Gender always shown
-    if (pWeight || pHeight) rows++;
-    if (pAddr) rows++;
-    if (pPhone) rows++;
-    if (pEmergency) rows++;
-    const bodyH = rows * 15 + 8;
-    const boxH = 20 + bodyH; // title bar + body
+    const L1 = M + 8, L2 = M + CW * 0.52;
+    
+    // Group fields into 2-column pairs to minimize vertical space
+    const pRows = [];
+    pRows.push([{ label: 'Name:', val: pName }, { label: 'Patient ID:', val: pId }]);
+    
+    const col1_2 = { label: 'Age/Gender:', val: pAgeGender };
+    const col2_2 = pBlood ? { label: 'Blood Type:', val: pBlood } : (pPhone ? { label: 'Contact:', val: pPhone } : null);
+    pRows.push([col1_2, col2_2]);
 
-    ensureSpace(boxH + 10);
+    if (pAddr || (pPhone && col2_2?.label !== 'Contact:')) {
+      const col1_3 = pAddr ? { label: 'Address:', val: pAddr } : null;
+      const col2_3 = (pPhone && col2_2?.label !== 'Contact:') ? { label: 'Contact:', val: pPhone } : (pEmergency ? { label: 'Emergency:', val: pEmergency } : null);
+      if (col1_3 || col2_3) pRows.push([col1_3, col2_3]);
+    }
+
+    const whStr = [pWeight, pHeight].filter(Boolean).join(' / ');
+    const hasEmergencyUnused = pEmergency && !pRows.some(r => r[1]?.label === 'Emergency:');
+    if (whStr || hasEmergencyUnused) {
+      pRows.push([
+        whStr ? { label: 'Weight/Height:', val: whStr } : null,
+        hasEmergencyUnused ? { label: 'Emergency:', val: pEmergency } : null
+      ]);
+    }
+
+    const rowCount = pRows.length;
+    const bodyH = rowCount * 13 + 5;
+    const boxH = 18 + bodyH;
+
+    ensureSpace(boxH + 8);
     const startY = y;
 
-    // 1. Background fill for the body area
-    doc.rect(M, startY + 20, CW, bodyH).fill(C.lightBg);
+    // 1. Background fill for body
+    doc.rect(M, startY + 18, CW, bodyH).fill(C.lightBg);
     // 2. Title bar
-    doc.rect(M, startY, CW, 20).fill(C.section);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(C.white)
-      .text('PATIENT INFORMATION', M + 8, startY + 5);
-    // 3. Border around the whole box
-    doc.rect(M, startY, CW, boxH).strokeColor(C.section).lineWidth(1.5).stroke();
+    doc.rect(M, startY, CW, 18).fill(C.section);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(C.white)
+      .text('PATIENT INFORMATION', M + 8, startY + 4.5);
+    // 3. Border
+    doc.rect(M, startY, CW, boxH).strokeColor(C.section).lineWidth(1.2).stroke();
 
-    // 4. Now draw text ON TOP of the background
-    y = startY + 24;
-    bv('Name:', pName, L1, y);          bv('Patient ID:', pId, L2, y);          y += 15;
-    bv('Age/Gender:', pAgeGender, L1, y); if (pBlood) bv('Blood Type:', pBlood, L2, y); y += 15;
-    if (pWeight || pHeight) { if (pWeight) bv('Weight:', pWeight, L1, y); if (pHeight) bv('Height:', pHeight, L2, y); y += 15; }
-    if (pAddr) { bv('Address:', pAddr, L1, y); y += 15; }
-    if (pPhone) { bv('Contact:', pPhone, L1, y); y += 15; }
-    if (pEmergency) { bv('Emergency Contact:', pEmergency, L1, y); y += 15; }
+    // 4. Content
+    let py = startY + 22;
+    pRows.forEach(row => {
+      if (row[0] && row[0].val) bv(row[0].label, row[0].val, L1, py);
+      if (row[1] && row[1].val) bv(row[1].label, row[1].val, L2, py);
+      py += 12.5;
+    });
 
-    y = startY + boxH + 8;
+    y = startY + boxH + 6;
   }
 
-  // ─── VITAL SIGNS ───────────────────────────────────────────────
+  // ─── VITAL SIGNS (COMPACT) ─────────────────────────────────────
   const hasVitals = vs.bloodPressure || vs.pulse || vs.temperature || vs.spo2 || vs.respiratoryRate || vs.bmi || vs.painScale;
   if (hasVitals) {
-    ensureSpace(65);
+    ensureSpace(50);
     const startY = y;
-    doc.rect(M, y, CW, 20).fill(C.section);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(C.white)
-      .text('VITAL SIGNS (Recorded at consultation)', M + 8, y + 5);
-    y += 25;
+    doc.rect(M, y, CW, 18).fill(C.section);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(C.white)
+      .text('VITAL SIGNS (Recorded at consultation)', M + 8, y + 4.5);
+    y += 22;
 
     const vW = CW / 4;
-    const vx = [M + 10, M + 10 + vW, M + 10 + vW * 2, M + 10 + vW * 3];
+    const vx = [M + 8, M + 8 + vW, M + 8 + vW * 2, M + 8 + vW * 3];
 
-    // Blood Pressure – split into systolic / diastolic with units
     if (vs.bloodPressure) {
       const bpParts = String(vs.bloodPressure).split('/');
       if (bpParts.length === 2) {
-        bv('BP:', `${bpParts[0].trim()} mmHg (Systolic) / ${bpParts[1].trim()} mmHg (Diastolic)`, vx[0], y);
+        bv('BP:', `${bpParts[0].trim()} / ${bpParts[1].trim()} mmHg`, vx[0], y);
       } else {
         bv('BP:', `${vs.bloodPressure} mmHg`, vx[0], y);
       }
     }
-    y += 15;
+    y += 12.5;
 
-    // Remaining vitals with proper units
     if (vs.pulse) bv('Pulse:', `${vs.pulse} bpm`, vx[0], y);
     if (vs.temperature) bv('Temp:', `${vs.temperature} °F`, vx[1], y);
     if (vs.spo2) bv('SpO2:', `${vs.spo2} %`, vx[2], y);
-    if (vs.respiratoryRate) bv('Resp. Rate:', `${vs.respiratoryRate} breaths/min`, vx[3], y);
-    y += 15;
-    if (vs.bmi) bv('BMI:', `${vs.bmi} kg/m²`, vx[0], y);
-    if (vs.painScale) bv('Pain Scale:', `${vs.painScale} / 10`, vx[1], y);
-    y += 12;
+    if (vs.respiratoryRate) bv('Resp. Rate:', `${vs.respiratoryRate} /min`, vx[3], y);
+    y += 12.5;
 
-    doc.rect(M, startY, CW, y - startY + 3).strokeColor(C.section).lineWidth(1.5).stroke();
-    y += 8;
+    if (vs.bmi || vs.painScale) {
+      if (vs.bmi) bv('BMI:', `${vs.bmi} kg/m²`, vx[0], y);
+      if (vs.painScale) bv('Pain Scale:', `${vs.painScale} / 10`, vx[1], y);
+      y += 12.5;
+    }
+
+    doc.rect(M, startY, CW, y - startY + 2).strokeColor(C.section).lineWidth(1.2).stroke();
+    y += 6;
   }
 
   // ─── MEDICAL HISTORY (TABULAR FORMAT) ───────────────────────────
@@ -571,35 +593,35 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   }
 
   if (historyRows.length > 0) {
-    let histTotalH = 30 + 20; // title bar + table header
+    let histTotalH = 25 + 18; // title bar + table header
     historyRows.forEach(row => {
       doc.font('Helvetica-Bold').fontSize(9);
       const catH = doc.heightOfString(row.category, { width: 135 });
       doc.font('Helvetica').fontSize(9);
       const detH = doc.heightOfString(row.details, { width: CW - 160 });
-      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowH = Math.max(20, catH + 6, detH + 6);
       histTotalH += rowH;
     });
-    histTotalH += 8;
+    histTotalH += 6;
 
     ensureSpace(histTotalH);
 
     titleBar('MEDICAL HISTORY');
 
     // Table Header
-    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.rect(M + 1, y, CW - 2, 18).fill(C.tblHdr);
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
-    doc.text('Record Type / Category', M + 8, y + 5, { width: 135 });
-    doc.text('Clinical Details / History', M + 154, y + 5, { width: CW - 162 });
+    doc.text('Record Type / Category', M + 8, y + 4.5, { width: 135 });
+    doc.text('Clinical Details / History', M + 154, y + 4.5, { width: CW - 162 });
 
     // Header borders
     doc.strokeColor(C.text).lineWidth(0.5);
     doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
-    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
-    doc.moveTo(M + 146, y).lineTo(M + 146, y + 20).stroke();
-    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
-    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
-    y += 22;
+    doc.moveTo(M + 1, y + 18).lineTo(PW - M - 1, y + 18).stroke();
+    doc.moveTo(M + 146, y).lineTo(M + 146, y + 18).stroke();
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 18).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 18).stroke();
+    y += 20;
 
     // Data Rows
     historyRows.forEach((row, idx) => {
@@ -607,7 +629,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const catH = doc.heightOfString(row.category, { width: 135 });
       doc.font('Helvetica').fontSize(9);
       const detH = doc.heightOfString(row.details, { width: CW - 160 });
-      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowH = Math.max(20, catH + 6, detH + 6);
       const rowY = y;
 
       if (idx % 2 === 0) {
@@ -616,11 +638,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       // Category
       doc.font('Helvetica-Bold').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
-        .text(row.category, M + 8, rowY + 5, { width: 135 });
+        .text(row.category, M + 8, rowY + 4.5, { width: 135 });
 
       // Details
       doc.font(row.isWarning ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
-        .text(row.details, M + 154, rowY + 5, { width: CW - 162 });
+        .text(row.details, M + 154, rowY + 4.5, { width: CW - 162 });
 
       // Row borders
       doc.strokeColor(C.border).lineWidth(0.3);
@@ -632,7 +654,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       y = rowY + rowH;
     });
 
-    y += 8;
+    y += 6;
   }
 
   // ─── CHIEF COMPLAINTS & CLINICAL NOTES (TABULAR FORMAT) ─────────
@@ -657,35 +679,35 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   }
 
   if (clinicalRows.length > 0) {
-    let clinTotalH = 30 + 20;
+    let clinTotalH = 25 + 18;
     clinicalRows.forEach(row => {
       doc.font('Helvetica-Bold').fontSize(9);
       const catH = doc.heightOfString(row.category, { width: 135 });
       doc.font('Helvetica').fontSize(9);
       const detH = doc.heightOfString(row.details, { width: CW - 160 });
-      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowH = Math.max(20, catH + 6, detH + 6);
       clinTotalH += rowH;
     });
-    clinTotalH += 8;
+    clinTotalH += 6;
 
     ensureSpace(clinTotalH);
 
     titleBar('CHIEF COMPLAINTS & CLINICAL NOTES');
 
     // Table Header
-    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.rect(M + 1, y, CW - 2, 18).fill(C.tblHdr);
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
-    doc.text('Clinical Parameter', M + 8, y + 5, { width: 135 });
-    doc.text('Observations / Findings', M + 154, y + 5, { width: CW - 162 });
+    doc.text('Clinical Parameter', M + 8, y + 4.5, { width: 135 });
+    doc.text('Observations / Findings', M + 154, y + 4.5, { width: CW - 162 });
 
     // Header borders
     doc.strokeColor(C.text).lineWidth(0.5);
     doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
-    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
-    doc.moveTo(M + 146, y).lineTo(M + 146, y + 20).stroke();
-    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
-    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
-    y += 22;
+    doc.moveTo(M + 1, y + 18).lineTo(PW - M - 1, y + 18).stroke();
+    doc.moveTo(M + 146, y).lineTo(M + 146, y + 18).stroke();
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 18).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 18).stroke();
+    y += 20;
 
     // Data Rows
     clinicalRows.forEach((row, idx) => {
@@ -693,7 +715,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const catH = doc.heightOfString(row.category, { width: 135 });
       doc.font('Helvetica').fontSize(9);
       const detH = doc.heightOfString(row.details, { width: CW - 160 });
-      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowH = Math.max(20, catH + 6, detH + 6);
       const rowY = y;
 
       if (idx % 2 === 0) {
@@ -702,11 +724,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       // Parameter
       doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
-        .text(row.category, M + 8, rowY + 5, { width: 135 });
+        .text(row.category, M + 8, rowY + 4.5, { width: 135 });
 
       // Details
       doc.font('Helvetica').fontSize(9).fillColor(C.text)
-        .text(row.details, M + 154, rowY + 5, { width: CW - 162 });
+        .text(row.details, M + 154, rowY + 4.5, { width: CW - 162 });
 
       // Row borders
       doc.strokeColor(C.border).lineWidth(0.3);
@@ -718,7 +740,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       y = rowY + rowH;
     });
 
-    y += 8;
+    y += 6;
   }
 
   // ─── Rx — PRESCRIBED MEDICATIONS ───────────────────────────────
@@ -773,8 +795,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     };
 
     // Pre-calculate total height for all medications to keep them together
-    let medsTotalH = 30; // title bar height
-    medsTotalH += 22; // table header
+    let medsTotalH = 25 + 18; // title bar + table header
     meds.forEach((med) => {
       doc.font('Helvetica').fontSize(8.5);
       const instrStr = buildInstrStr(med);
@@ -786,18 +807,18 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const nameStr = safeStr(med.name) + (med.type ? `\n(${safeStr(med.type)})` : '');
       doc.font('Helvetica-Bold').fontSize(9);
       const nameH = doc.heightOfString(nameStr, { width: col.name.w - 8 });
-      const rowH = Math.max(30, instrH + 10, nameH + 10, dosH + 10, durH + 10);
+      const rowH = Math.max(24, instrH + 6, nameH + 6, dosH + 6, durH + 6);
       medsTotalH += rowH;
     });
     // Add space for medication notes if present
     if (medNotes.length > 0) {
-      medsTotalH += 18; // subheader
+      medsTotalH += 16; // subheader
       medNotes.forEach(note => {
-        doc.font('Helvetica').fontSize(9.5);
-        medsTotalH += Math.max(16, doc.heightOfString(`\u25B3 ${safeStr(note)}`, { width: PW - M - (M + 15) - 5 }) + 1);
+        doc.font('Helvetica').fontSize(9);
+        medsTotalH += Math.max(14, doc.heightOfString(`\u2022 ${safeStr(note)}`, { width: PW - M - (M + 15) - 5 }) + 1);
       });
     }
-    medsTotalH += 16; // padding
+    medsTotalH += 10; // padding
 
     // Ensure all medications fit on the same page
     ensureSpace(medsTotalH);
@@ -805,25 +826,24 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     titleBar('PRESCRIBED MEDICATIONS');
 
     // ── table header ──
-    const thY = y;
-    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.rect(M + 1, y, CW - 2, 18).fill(C.tblHdr);
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
-    doc.text('No.',             col.num.x + 2,   y + 5, { width: col.num.w - 4,   align: 'center' });
-    doc.text('Medicine Name',   col.name.x + 4,  y + 5, { width: col.name.w - 8 });
-    doc.text('Dosage',          col.dos.x + 4,   y + 5, { width: col.dos.w - 8,   align: 'center' });
-    doc.text('Duration / Qty',  col.dur.x + 4,   y + 5, { width: col.dur.w - 8,   align: 'center' });
-    doc.text('Instructions',    col.instr.x + 4, y + 5, { width: col.instr.w - 8 });
+    doc.text('No.',             col.num.x + 2,   y + 4.5, { width: col.num.w - 4,   align: 'center' });
+    doc.text('Medicine Name',   col.name.x + 4,  y + 4.5, { width: col.name.w - 8 });
+    doc.text('Dosage',          col.dos.x + 4,   y + 4.5, { width: col.dos.w - 8,   align: 'center' });
+    doc.text('Duration / Qty',  col.dur.x + 4,   y + 4.5, { width: col.dur.w - 8,   align: 'center' });
+    doc.text('Instructions',    col.instr.x + 4, y + 4.5, { width: col.instr.w - 8 });
 
     // header borders
     doc.strokeColor(C.text).lineWidth(0.5);
     doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
-    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
+    doc.moveTo(M + 1, y + 18).lineTo(PW - M - 1, y + 18).stroke();
     [col.name.x, col.dos.x, col.dur.x, col.instr.x].forEach(cx => {
-      doc.moveTo(cx, y).lineTo(cx, y + 20).stroke();
+      doc.moveTo(cx, y).lineTo(cx, y + 18).stroke();
     });
-    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
-    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
-    y += 22;
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 18).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 18).stroke();
+    y += 20;
 
     // ── data rows ──
     meds.forEach((med, idx) => {
@@ -838,7 +858,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const nameStr = safeStr(med.name) + (med.type ? `\n(${safeStr(med.type)})` : '');
       doc.font('Helvetica-Bold').fontSize(9);
       const nameH = doc.heightOfString(nameStr, { width: col.name.w - 8 });
-      const rowH = Math.max(30, instrH + 10, nameH + 10, dosH + 10, durH + 10);
+      const rowH = Math.max(24, instrH + 6, nameH + 6, dosH + 6, durH + 6);
 
       const rowY = y;
 
@@ -849,28 +869,28 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       // cell content — No.
       doc.font('Helvetica').fontSize(9).fillColor(C.text)
-        .text(`${idx + 1}`, col.num.x + 2, rowY + 6, { width: col.num.w - 4, align: 'center' });
+        .text(`${idx + 1}`, col.num.x + 2, rowY + 5, { width: col.num.w - 4, align: 'center' });
 
       // cell content — Medicine Name
       doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
-        .text(safeStr(med.name) || '', col.name.x + 4, rowY + 6, { width: col.name.w - 8 });
+        .text(safeStr(med.name) || '', col.name.x + 4, rowY + 5, { width: col.name.w - 8 });
       if (med.type) {
         const nh = doc.font('Helvetica-Bold').fontSize(9).heightOfString(safeStr(med.name) || '', { width: col.name.w - 8 });
         doc.font('Helvetica').fontSize(8).fillColor('#666666')
-          .text(`(${safeStr(med.type)})`, col.name.x + 4, rowY + 6 + nh, { width: col.name.w - 8 });
+          .text(`(${safeStr(med.type)})`, col.name.x + 4, rowY + 5 + nh, { width: col.name.w - 8 });
       }
 
       // cell content — Dosage
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-        .text(dosStr, col.dos.x + 4, rowY + 6, { width: col.dos.w - 8, align: 'center' });
+        .text(dosStr, col.dos.x + 4, rowY + 5, { width: col.dos.w - 8, align: 'center' });
 
       // cell content — Duration / Qty
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-        .text(durStr, col.dur.x + 4, rowY + 6, { width: col.dur.w - 8, align: 'center' });
+        .text(durStr, col.dur.x + 4, rowY + 5, { width: col.dur.w - 8, align: 'center' });
 
       // cell content — Instructions
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-        .text(instrStr, col.instr.x + 4, rowY + 6, { width: col.instr.w - 8 });
+        .text(instrStr, col.instr.x + 4, rowY + 5, { width: col.instr.w - 8 });
 
       // row borders
       doc.strokeColor(C.border).lineWidth(0.3);
@@ -882,7 +902,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       y = rowY + rowH;
     });
 
-    y += 6;
+    y += 5;
 
     // medication notes
     if (medNotes.length > 0) {
@@ -890,7 +910,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       medNotes.forEach(note => warnBullet(safeStr(note)));
       y += 4;
     }
-    y += 6;
+    y += 5;
   }
 
   // ─── INVESTIGATIONS REQUIRED (TABULAR FORMAT) ───────────────────
@@ -912,7 +932,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     };
 
     // Pre-calculate total height for all investigations to keep them together
-    let invTotalH = 30 + 22; // title bar + table header
+    let invTotalH = 25 + 18; // title bar + table header
     invList.forEach((inv) => {
       const testName = safeStr(inv.testName) || safeStr(inv);
       const condStr = buildCondStr(inv);
@@ -926,38 +946,38 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const reasonH = doc.heightOfString(reasonStr, { width: invCol.reason.w - 8 });
       const instrH = doc.heightOfString(instrStr, { width: invCol.instr.w - 8 });
 
-      const rowH = Math.max(26, nameH + 10, condH + 10, reasonH + 10, instrH + 10);
+      const rowH = Math.max(22, nameH + 6, condH + 6, reasonH + 6, instrH + 6);
       invTotalH += rowH;
     });
 
     if (invNotes) {
-      invTotalH += 24;
+      invTotalH += 20;
     }
-    invTotalH += 10;
+    invTotalH += 8;
 
     ensureSpace(invTotalH);
 
     titleBar('INVESTIGATIONS & DIAGNOSTIC TESTS REQUIRED');
 
     // ── table header ──
-    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.rect(M + 1, y, CW - 2, 18).fill(C.tblHdr);
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
-    doc.text('No.',                  invCol.num.x + 2,    y + 5, { width: invCol.num.w - 4,   align: 'center' });
-    doc.text('Investigation / Test', invCol.name.x + 4,   y + 5, { width: invCol.name.w - 8 });
-    doc.text('Priority & Fasting',   invCol.cond.x + 4,   y + 5, { width: invCol.cond.w - 8,   align: 'center' });
-    doc.text('Clinical Reason',      invCol.reason.x + 4, y + 5, { width: invCol.reason.w - 8 });
-    doc.text('Special Instructions', invCol.instr.x + 4,  y + 5, { width: invCol.instr.w - 8 });
+    doc.text('No.',                  invCol.num.x + 2,    y + 4.5, { width: invCol.num.w - 4,   align: 'center' });
+    doc.text('Investigation / Test', invCol.name.x + 4,   y + 4.5, { width: invCol.name.w - 8 });
+    doc.text('Priority & Fasting',   invCol.cond.x + 4,   y + 4.5, { width: invCol.cond.w - 8,   align: 'center' });
+    doc.text('Clinical Reason',      invCol.reason.x + 4, y + 4.5, { width: invCol.reason.w - 8 });
+    doc.text('Special Instructions', invCol.instr.x + 4,  y + 4.5, { width: invCol.instr.w - 8 });
 
     // header borders
     doc.strokeColor(C.text).lineWidth(0.5);
     doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
-    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
+    doc.moveTo(M + 1, y + 18).lineTo(PW - M - 1, y + 18).stroke();
     [invCol.name.x, invCol.cond.x, invCol.reason.x, invCol.instr.x].forEach(cx => {
-      doc.moveTo(cx, y).lineTo(cx, y + 20).stroke();
+      doc.moveTo(cx, y).lineTo(cx, y + 18).stroke();
     });
-    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
-    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
-    y += 22;
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 18).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 18).stroke();
+    y += 20;
 
     // ── data rows ──
     invList.forEach((inv, idx) => {
@@ -973,7 +993,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const reasonH = doc.heightOfString(reasonStr, { width: invCol.reason.w - 8 });
       const instrH = doc.heightOfString(instrStr, { width: invCol.instr.w - 8 });
 
-      const rowH = Math.max(26, nameH + 10, condH + 10, reasonH + 10, instrH + 10);
+      const rowH = Math.max(22, nameH + 6, condH + 6, reasonH + 6, instrH + 6);
       const rowY = y;
 
       // Alternate row background
@@ -983,23 +1003,23 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       // No.
       doc.font('Helvetica').fontSize(9).fillColor(C.text)
-        .text(`${idx + 1}`, invCol.num.x + 2, rowY + 6, { width: invCol.num.w - 4, align: 'center' });
+        .text(`${idx + 1}`, invCol.num.x + 2, rowY + 5, { width: invCol.num.w - 4, align: 'center' });
 
       // Test Name
       doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
-        .text(testName, invCol.name.x + 4, rowY + 6, { width: invCol.name.w - 8 });
+        .text(testName, invCol.name.x + 4, rowY + 5, { width: invCol.name.w - 8 });
 
       // Priority & Fasting
       doc.font('Helvetica').fontSize(8.5).fillColor(inv.priority === 'urgent' ? C.warn : C.text)
-        .text(condStr, invCol.cond.x + 4, rowY + 6, { width: invCol.cond.w - 8, align: 'center' });
+        .text(condStr, invCol.cond.x + 4, rowY + 5, { width: invCol.cond.w - 8, align: 'center' });
 
       // Clinical Reason
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-        .text(reasonStr, invCol.reason.x + 4, rowY + 6, { width: invCol.reason.w - 8 });
+        .text(reasonStr, invCol.reason.x + 4, rowY + 5, { width: invCol.reason.w - 8 });
 
       // Special Instructions
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-        .text(instrStr, invCol.instr.x + 4, rowY + 6, { width: invCol.instr.w - 8 });
+        .text(instrStr, invCol.instr.x + 4, rowY + 5, { width: invCol.instr.w - 8 });
 
       // Row borders
       doc.strokeColor(C.border).lineWidth(0.3);
@@ -1011,14 +1031,14 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       y = rowY + rowH;
     });
 
-    y += 6;
+    y += 5;
 
     if (invNotes) {
       subHdr('General Lab / Diagnostic Notes:', M + 10, C.warn);
       warnBullet(safeStr(invNotes));
-      y += 4;
+      y += 3;
     }
-    y += 6;
+    y += 5;
   }
 
   // ─── DIETARY & LIFESTYLE RECOMMENDATIONS (TABULAR FORMAT) ───────
@@ -1046,35 +1066,35 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   }
 
   if (dietLifeRows.length > 0) {
-    let dlTotalH = 30 + 20;
+    let dlTotalH = 25 + 18;
     dietLifeRows.forEach(row => {
       doc.font('Helvetica-Bold').fontSize(9);
       const catH = doc.heightOfString(row.category, { width: 135 });
       doc.font('Helvetica').fontSize(9);
       const detH = doc.heightOfString(row.details, { width: CW - 160 });
-      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowH = Math.max(20, catH + 6, detH + 6);
       dlTotalH += rowH;
     });
-    dlTotalH += 8;
+    dlTotalH += 6;
 
     ensureSpace(dlTotalH);
 
     titleBar('DIETARY & LIFESTYLE RECOMMENDATIONS');
 
     // Table Header
-    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.rect(M + 1, y, CW - 2, 18).fill(C.tblHdr);
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
-    doc.text('Advice Category', M + 8, y + 5, { width: 135 });
-    doc.text('Recommendations & Instructions', M + 154, y + 5, { width: CW - 162 });
+    doc.text('Advice Category', M + 8, y + 4.5, { width: 135 });
+    doc.text('Recommendations & Instructions', M + 154, y + 4.5, { width: CW - 162 });
 
     // Header borders
     doc.strokeColor(C.text).lineWidth(0.5);
     doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
-    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
-    doc.moveTo(M + 146, y).lineTo(M + 146, y + 20).stroke();
-    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
-    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
-    y += 22;
+    doc.moveTo(M + 1, y + 18).lineTo(PW - M - 1, y + 18).stroke();
+    doc.moveTo(M + 146, y).lineTo(M + 146, y + 18).stroke();
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 18).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 18).stroke();
+    y += 20;
 
     // Data Rows
     dietLifeRows.forEach((row, idx) => {
@@ -1082,7 +1102,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const catH = doc.heightOfString(row.category, { width: 135 });
       doc.font('Helvetica').fontSize(9);
       const detH = doc.heightOfString(row.details, { width: CW - 160 });
-      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowH = Math.max(20, catH + 6, detH + 6);
       const rowY = y;
 
       if (idx % 2 === 0) {
@@ -1091,11 +1111,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       // Category
       doc.font('Helvetica-Bold').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
-        .text(row.category, M + 8, rowY + 5, { width: 135 });
+        .text(row.category, M + 8, rowY + 4.5, { width: 135 });
 
       // Details
       doc.font(row.isWarning ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
-        .text(row.details, M + 154, rowY + 5, { width: CW - 162 });
+        .text(row.details, M + 154, rowY + 4.5, { width: CW - 162 });
 
       // Row borders
       doc.strokeColor(C.border).lineWidth(0.3);
@@ -1107,7 +1127,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       y = rowY + rowH;
     });
 
-    y += 8;
+    y += 6;
   }
 
   // ─── STICKY FOOTER SECTIONS ─────────────────────────────────────
