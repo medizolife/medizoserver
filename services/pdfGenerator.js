@@ -331,13 +331,13 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     y += Math.max(13, h + 1);
   };
 
-  /** Warning bullet (red with triangle) */
+  /** Warning bullet (red with standard marker) */
   const warnBullet = (text, indent = M + 15) => {
     ensureSpace(16);
     const s = safeStr(text);
-    doc.font('Helvetica').fontSize(9.5).fillColor(C.warn);
-    const h = doc.heightOfString(`\u25B3 ${s}`, { width: PW - M - indent - 5 });
-    doc.text(`\u25B3 ${s}`, indent, y, { width: PW - M - indent - 5 });
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor(C.warn);
+    const h = doc.heightOfString(`\u2022 ${s}`, { width: PW - M - indent - 5 });
+    doc.text(`\u2022 ${s}`, indent, y, { width: PW - M - indent - 5 });
     y += Math.max(13, h + 1);
   };
 
@@ -531,24 +531,194 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     y += 8;
   }
 
-  // ─── MEDICAL HISTORY ───────────────────────────────────────────
-  const hasHistory = allergyList.length > 0 || curMeds.length > 0 || surgHist.length > 0;
-  if (hasHistory) {
-    titleBar('MEDICAL HISTORY');
-    if (allergyList.length) { subHdr('Known Allergies:', M + 10, C.warn); allergyList.forEach(a => warnBullet(a)); y += 2; }
-    if (curMeds.length)     { subHdr('Current Medications:'); curMeds.forEach(m => bullet(m)); y += 2; }
-    if (surgHist.length)    { subHdr('Past Surgical History:'); surgHist.forEach(s => bullet(s)); y += 2; }
-    y += 6;
+  // ─── MEDICAL HISTORY (TABULAR FORMAT) ───────────────────────────
+  const historyRows = [];
+  if (allergyList.length > 0) {
+    historyRows.push({
+      category: 'Known Allergies',
+      details: allergyList.map(safeStr).filter(Boolean).join(', '),
+      isWarning: true
+    });
+  }
+  if (curMeds.length > 0) {
+    historyRows.push({
+      category: 'Current Medications',
+      details: curMeds.map(safeStr).filter(Boolean).join(', '),
+      isWarning: false
+    });
+  }
+  if (surgHist.length > 0) {
+    historyRows.push({
+      category: 'Past Surgical History',
+      details: surgHist.map(safeStr).filter(Boolean).join(', '),
+      isWarning: false
+    });
+  }
+  const chronicList = prescription.chronicConditions || patient.chronicConditions || [];
+  if (chronicList && (Array.isArray(chronicList) ? chronicList.length > 0 : Boolean(chronicList))) {
+    historyRows.push({
+      category: 'Chronic Conditions',
+      details: Array.isArray(chronicList) ? chronicList.map(safeStr).filter(Boolean).join(', ') : safeStr(chronicList),
+      isWarning: false
+    });
+  }
+  if (prescription.medicalHistory && typeof prescription.medicalHistory === 'string' && prescription.medicalHistory.trim()) {
+    historyRows.push({
+      category: 'Past Medical Notes',
+      details: prescription.medicalHistory.trim(),
+      isWarning: false
+    });
   }
 
-  // ─── CHIEF COMPLAINTS & CLINICAL NOTES ─────────────────────────
-  const hasClinical = complaints.length > 0 || findings.length > 0 || provDiag.length > 0;
-  if (hasClinical) {
+  if (historyRows.length > 0) {
+    let histTotalH = 30 + 20; // title bar + table header
+    historyRows.forEach(row => {
+      doc.font('Helvetica-Bold').fontSize(9);
+      const catH = doc.heightOfString(row.category, { width: 135 });
+      doc.font('Helvetica').fontSize(9);
+      const detH = doc.heightOfString(row.details, { width: CW - 160 });
+      const rowH = Math.max(22, catH + 10, detH + 10);
+      histTotalH += rowH;
+    });
+    histTotalH += 8;
+
+    ensureSpace(histTotalH);
+
+    titleBar('MEDICAL HISTORY');
+
+    // Table Header
+    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
+    doc.text('Record Type / Category', M + 8, y + 5, { width: 135 });
+    doc.text('Clinical Details / History', M + 154, y + 5, { width: CW - 162 });
+
+    // Header borders
+    doc.strokeColor(C.text).lineWidth(0.5);
+    doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
+    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
+    doc.moveTo(M + 146, y).lineTo(M + 146, y + 20).stroke();
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
+    y += 22;
+
+    // Data Rows
+    historyRows.forEach((row, idx) => {
+      doc.font('Helvetica-Bold').fontSize(9);
+      const catH = doc.heightOfString(row.category, { width: 135 });
+      doc.font('Helvetica').fontSize(9);
+      const detH = doc.heightOfString(row.details, { width: CW - 160 });
+      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowY = y;
+
+      if (idx % 2 === 0) {
+        doc.rect(M + 1, rowY, CW - 2, rowH).fill('#F8FCFA');
+      }
+
+      // Category
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
+        .text(row.category, M + 8, rowY + 5, { width: 135 });
+
+      // Details
+      doc.font(row.isWarning ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
+        .text(row.details, M + 154, rowY + 5, { width: CW - 162 });
+
+      // Row borders
+      doc.strokeColor(C.border).lineWidth(0.3);
+      doc.moveTo(M + 1, rowY + rowH).lineTo(PW - M - 1, rowY + rowH).stroke();
+      [M + 1, M + 146, PW - M - 1].forEach(cx => {
+        doc.moveTo(cx, rowY).lineTo(cx, rowY + rowH).stroke();
+      });
+
+      y = rowY + rowH;
+    });
+
+    y += 8;
+  }
+
+  // ─── CHIEF COMPLAINTS & CLINICAL NOTES (TABULAR FORMAT) ─────────
+  const clinicalRows = [];
+  if (complaints.length > 0) {
+    clinicalRows.push({
+      category: 'Presenting Complaints',
+      details: complaints.map(safeStr).filter(Boolean).join(', ')
+    });
+  }
+  if (findings.length > 0) {
+    clinicalRows.push({
+      category: 'Clinical Findings',
+      details: findings.map(safeStr).filter(Boolean).join(', ')
+    });
+  }
+  if (provDiag.length > 0) {
+    clinicalRows.push({
+      category: 'Provisional Diagnosis',
+      details: provDiag.map(safeStr).filter(Boolean).join(', ')
+    });
+  }
+
+  if (clinicalRows.length > 0) {
+    let clinTotalH = 30 + 20;
+    clinicalRows.forEach(row => {
+      doc.font('Helvetica-Bold').fontSize(9);
+      const catH = doc.heightOfString(row.category, { width: 135 });
+      doc.font('Helvetica').fontSize(9);
+      const detH = doc.heightOfString(row.details, { width: CW - 160 });
+      const rowH = Math.max(22, catH + 10, detH + 10);
+      clinTotalH += rowH;
+    });
+    clinTotalH += 8;
+
+    ensureSpace(clinTotalH);
+
     titleBar('CHIEF COMPLAINTS & CLINICAL NOTES');
-    if (complaints.length) { subHdr('Presenting Complaints:'); complaints.forEach(c => bullet(c)); y += 2; }
-    if (findings.length)   { subHdr('Clinical Examination Findings:'); findings.forEach(f => bullet(f)); y += 2; }
-    if (provDiag.length)   { subHdr('Provisional Diagnosis:'); provDiag.forEach(d => bullet(d)); y += 2; }
-    y += 30;
+
+    // Table Header
+    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
+    doc.text('Clinical Parameter', M + 8, y + 5, { width: 135 });
+    doc.text('Observations / Findings', M + 154, y + 5, { width: CW - 162 });
+
+    // Header borders
+    doc.strokeColor(C.text).lineWidth(0.5);
+    doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
+    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
+    doc.moveTo(M + 146, y).lineTo(M + 146, y + 20).stroke();
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
+    y += 22;
+
+    // Data Rows
+    clinicalRows.forEach((row, idx) => {
+      doc.font('Helvetica-Bold').fontSize(9);
+      const catH = doc.heightOfString(row.category, { width: 135 });
+      doc.font('Helvetica').fontSize(9);
+      const detH = doc.heightOfString(row.details, { width: CW - 160 });
+      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowY = y;
+
+      if (idx % 2 === 0) {
+        doc.rect(M + 1, rowY, CW - 2, rowH).fill('#F8FCFA');
+      }
+
+      // Parameter
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
+        .text(row.category, M + 8, rowY + 5, { width: 135 });
+
+      // Details
+      doc.font('Helvetica').fontSize(9).fillColor(C.text)
+        .text(row.details, M + 154, rowY + 5, { width: CW - 162 });
+
+      // Row borders
+      doc.strokeColor(C.border).lineWidth(0.3);
+      doc.moveTo(M + 1, rowY + rowH).lineTo(PW - M - 1, rowY + rowH).stroke();
+      [M + 1, M + 146, PW - M - 1].forEach(cx => {
+        doc.moveTo(cx, rowY).lineTo(cx, rowY + rowH).stroke();
+      });
+
+      y = rowY + rowH;
+    });
+
+    y += 8;
   }
 
   // ─── Rx — PRESCRIBED MEDICATIONS ───────────────────────────────
@@ -851,18 +1021,93 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     y += 6;
   }
 
-  // ─── DIETARY & LIFESTYLE ───────────────────────────────────────
-  const hasDietLife = dietMods.length > 0 || lifestyleChg.length > 0 || warnSigns.length > 0;
-  if (hasDietLife) {
+  // ─── DIETARY & LIFESTYLE RECOMMENDATIONS (TABULAR FORMAT) ───────
+  const dietLifeRows = [];
+  if (dietMods.length > 0) {
+    dietLifeRows.push({
+      category: 'Diet Modifications',
+      details: dietMods.map(safeStr).filter(Boolean).join(', '),
+      isWarning: false
+    });
+  }
+  if (lifestyleChg.length > 0) {
+    dietLifeRows.push({
+      category: 'Lifestyle Advice',
+      details: lifestyleChg.map(safeStr).filter(Boolean).join(', '),
+      isWarning: false
+    });
+  }
+  if (warnSigns.length > 0) {
+    dietLifeRows.push({
+      category: 'Emergency Warning Signs',
+      details: warnSigns.map(safeStr).filter(Boolean).join(', '),
+      isWarning: true
+    });
+  }
+
+  if (dietLifeRows.length > 0) {
+    let dlTotalH = 30 + 20;
+    dietLifeRows.forEach(row => {
+      doc.font('Helvetica-Bold').fontSize(9);
+      const catH = doc.heightOfString(row.category, { width: 135 });
+      doc.font('Helvetica').fontSize(9);
+      const detH = doc.heightOfString(row.details, { width: CW - 160 });
+      const rowH = Math.max(22, catH + 10, detH + 10);
+      dlTotalH += rowH;
+    });
+    dlTotalH += 8;
+
+    ensureSpace(dlTotalH);
+
     titleBar('DIETARY & LIFESTYLE RECOMMENDATIONS');
-    if (dietMods.length)     { subHdr('Diet Modifications:'); dietMods.forEach(d => bullet(d)); y += 2; }
-    if (lifestyleChg.length) { subHdr('Lifestyle Changes:'); lifestyleChg.forEach(l => bullet(l)); y += 2; }
-    if (warnSigns.length) {
-      subHdr('Warning Signs - Seek Immediate Medical Attention if:', M + 10, C.warn);
-      warnSigns.forEach(w => warnBullet(w));
-      y += 2;
-    }
-    y += 6;
+
+    // Table Header
+    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
+    doc.text('Advice Category', M + 8, y + 5, { width: 135 });
+    doc.text('Recommendations & Instructions', M + 154, y + 5, { width: CW - 162 });
+
+    // Header borders
+    doc.strokeColor(C.text).lineWidth(0.5);
+    doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
+    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
+    doc.moveTo(M + 146, y).lineTo(M + 146, y + 20).stroke();
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
+    y += 22;
+
+    // Data Rows
+    dietLifeRows.forEach((row, idx) => {
+      doc.font('Helvetica-Bold').fontSize(9);
+      const catH = doc.heightOfString(row.category, { width: 135 });
+      doc.font('Helvetica').fontSize(9);
+      const detH = doc.heightOfString(row.details, { width: CW - 160 });
+      const rowH = Math.max(22, catH + 10, detH + 10);
+      const rowY = y;
+
+      if (idx % 2 === 0) {
+        doc.rect(M + 1, rowY, CW - 2, rowH).fill('#F8FCFA');
+      }
+
+      // Category
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
+        .text(row.category, M + 8, rowY + 5, { width: 135 });
+
+      // Details
+      doc.font(row.isWarning ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(row.isWarning ? C.warn : C.text)
+        .text(row.details, M + 154, rowY + 5, { width: CW - 162 });
+
+      // Row borders
+      doc.strokeColor(C.border).lineWidth(0.3);
+      doc.moveTo(M + 1, rowY + rowH).lineTo(PW - M - 1, rowY + rowH).stroke();
+      [M + 1, M + 146, PW - M - 1].forEach(cx => {
+        doc.moveTo(cx, rowY).lineTo(cx, rowY + rowH).stroke();
+      });
+
+      y = rowY + rowH;
+    });
+
+    y += 8;
   }
 
   // ─── STICKY FOOTER SECTIONS ─────────────────────────────────────
