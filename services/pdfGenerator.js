@@ -21,8 +21,7 @@ async function loadImageBuffer(urlPath) {
   if (!urlPath) return null;
   try {
     if (typeof urlPath === 'string' && urlPath.startsWith('data:image/')) {
-      const base64Data = urlPath.split(',')[1];
-      if (base64Data) return Buffer.from(base64Data, 'base64');
+      return urlPath; // pdfkit.standalone supports data URLs directly
     }
     // Clean query parameters from urlPath if any, e.g. /api/doctors/images/stamp.png?v=123
     const cleanUrl = String(urlPath).split('?')[0];
@@ -30,7 +29,13 @@ async function loadImageBuffer(urlPath) {
     const filename = cleanUrl.split('/').pop();
     if (!filename) return null;
     const imgDoc = await Image.findOne({ filename });
-    if (imgDoc && imgDoc.data) return imgDoc.data;
+    if (imgDoc && imgDoc.data) {
+      const buf = imgDoc.data;
+      if (Buffer.isBuffer(buf)) {
+        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length);
+      }
+      return buf;
+    }
   } catch (e) {
     console.error('D1 image lookup error:', e.message);
   }
@@ -38,9 +43,98 @@ async function loadImageBuffer(urlPath) {
   try {
     const cleanUrl = String(urlPath).split('?')[0];
     const localPath = typeof __dirname !== 'undefined' ? path.join(__dirname, '..', cleanUrl.replace(/^\//, '')) : null;
-    if (localPath && fs.existsSync && fs.existsSync(localPath)) return fs.readFileSync(localPath);
+    if (localPath && fs.existsSync && fs.existsSync(localPath)) {
+      const buf = fs.readFileSync(localPath);
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length);
+    }
   } catch (e) {}
   return null;
+}
+
+// ── Indian States List for Address Parsing ──
+const INDIAN_STATES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
+  'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
+  'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab',
+  'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh',
+  'Uttarakhand', 'West Bengal', 'Delhi', 'New Delhi', 'Jammu and Kashmir', 'Ladakh',
+  'Puducherry', 'Chandigarh', 'Andaman and Nicobar', 'Dadra and Nagar Haveli'
+];
+
+/**
+ * Format address to display only City and State (e.g. "Patna, Bihar")
+ */
+function formatCityState(rawAddress, explicitCity, explicitState) {
+  if (explicitCity && explicitState) {
+    return `${explicitCity.trim()}, ${explicitState.trim()}`;
+  }
+  if (!rawAddress || typeof rawAddress !== 'string') {
+    return explicitCity || explicitState || '';
+  }
+
+  const str = rawAddress.trim();
+  if (!str) return '';
+
+  // Clean out common country names, postal codes, and extra punctuation
+  let cleaned = str
+    .replace(/\b(India|United States|USA|UK|Canada)\b/gi, '')
+    .replace(/\b\d{5,6}\b/g, '')
+    .replace(/\s+,/g, ',')
+    .replace(/,\s*,/g, ',')
+    .trim();
+
+  // Split by commas
+  let parts = cleaned.split(',').map(p => p.trim()).filter(Boolean);
+
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0];
+
+  // Look for matching state
+  let matchedState = '';
+  let stateIndex = -1;
+
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const partLower = parts[i].toLowerCase();
+    const foundState = INDIAN_STATES.find(s => s.toLowerCase() === partLower || partLower.includes(s.toLowerCase()));
+    if (foundState) {
+      matchedState = foundState;
+      stateIndex = i;
+      break;
+    }
+  }
+
+  if (!matchedState && explicitState) {
+    matchedState = explicitState.trim();
+  }
+
+  let matchedCity = '';
+  if (explicitCity) {
+    matchedCity = explicitCity.trim();
+  } else if (stateIndex > 0) {
+    const seen = new Set();
+    for (let i = stateIndex - 1; i >= 0; i--) {
+      const p = parts[i].replace(/\b(Rural|Urban|District|Dist|City)\b/gi, '').trim() || parts[i];
+      if (!matchedCity && p && !seen.has(p.toLowerCase())) {
+        matchedCity = p;
+        seen.add(p.toLowerCase());
+      }
+    }
+  } else {
+    if (parts.length >= 2) {
+      matchedCity = parts[parts.length - 2];
+      matchedState = parts[parts.length - 1];
+    } else {
+      matchedCity = parts[0];
+    }
+  }
+
+  if (matchedCity && matchedState) {
+    if (matchedCity.toLowerCase() === matchedState.toLowerCase()) {
+      return matchedState;
+    }
+    return `${matchedCity}, ${matchedState}`;
+  }
+  return matchedCity || matchedState || parts.join(', ');
 }
 
 // ── colour palette ──
@@ -159,7 +253,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const pId        = prescription.patientDisplayId || (patient.id ? `PT-${String(patient.id).slice(-6)}` : '');
   const pPhone     = patient.contactNumber || patient.phone || '';
   const pEmail     = patient.email || '';
-  const pAddr      = patient.address || '';
+  const pAddr      = formatCityState(patient.address || prescription.patientAddress || '', patient.city || prescription.patientCity, patient.state || prescription.patientState);
   const pWeight    = patient.weight ? `${patient.weight} kg` : '';
   const pHeight    = patient.height ? `${patient.height} cm` : '';
   const pBlood     = patient.bloodType || '';
@@ -277,7 +371,8 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const docSpecialization = doctor.specialization || doctor.doctorSpecialization || prescription.doctorSpecialization || prescription.specialization || 'General Physician';
   const docRegNo = doctor.registrationNumber || doctor.licenseNumber || doctor.doctorLicenseNumber || prescription.doctorRegistrationNumber || prescription.doctorLicenseNumber || prescription.registrationNumber || '';
   const drPhone = doctor.contactNumber || doctor.phone || doctor.doctorPhone || prescription.doctorPhone || prescription.contactNumber || '';
-  const docAddress = doctor.address || doctor.clinicAddress || prescription.doctorAddress || prescription.clinicAddress || '';
+  const rawDocAddress = doctor.address || doctor.clinicAddress || prescription.doctorAddress || prescription.clinicAddress || '';
+  const docAddress = formatCityState(rawDocAddress, doctor.city || prescription.doctorCity, doctor.state || prescription.doctorState);
 
   doc.font('Helvetica-Bold').fontSize(15).fillColor(C.primary)
     .text(doctorDisplayName, M + 10, y + 8, { width: CW * 0.55 });
@@ -356,8 +451,7 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       color: { dark: '#000000', light: '#FFFFFF' },
       errorCorrectionLevel: 'M'
     });
-    const qrBuf = Buffer.from(qrUrl.replace(/^data:image\/png;base64,/, ''), 'base64');
-    doc.image(qrBuf, PW - M - qrSize - 5, y - 5, { width: qrSize, height: qrSize });
+    doc.image(qrUrl, PW - M - qrSize - 5, y - 5, { width: qrSize, height: qrSize });
     qrRendered = true;
   } catch (e) { console.error('QR generation error:', e); }
 
@@ -630,73 +724,130 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
     y += 6;
   }
 
-  // ─── INVESTIGATIONS REQUIRED ───────────────────────────────────
+  // ─── INVESTIGATIONS REQUIRED (TABULAR FORMAT) ───────────────────
   if (invList.length > 0) {
-    // Pre-calculate total height for all investigations to keep them together
-    let invTotalH = 30; // title bar height
-    invList.forEach((inv) => {
-      let invItemH = 16; // base height for test name
-      if (inv.reason) {
-        doc.font('Helvetica').fontSize(9);
-        invItemH += doc.heightOfString(`   ${inv.reason}`, { width: CW - 40 }) + 2;
-      }
-      const details = [];
-      if (inv.priority) details.push(`Priority: ${inv.priority}`);
-      if (inv.fasting)  details.push(`Fasting required: ${inv.fasting}`);
-      if (details.length) {
-        invItemH += 15;
-      }
-      if (inv.specialInstructions) {
-        doc.font('Helvetica-Oblique').fontSize(8.5);
-        invItemH += doc.heightOfString(`Instructions: ${inv.specialInstructions}`, { width: CW - 40 }) + 2;
-      }
-      invItemH += 4; // spacing
-      invTotalH += invItemH;
-    });
-    if (invNotes) {
-      invTotalH += 20; // notes line
-    }
-    invTotalH += 10; // padding
+    const invCol = {
+      num:    { x: M + 1, w: 28 },
+      name:   { x: M + 29, w: 155 },
+      cond:   { x: M + 184, w: 105 },
+      reason: { x: M + 289, w: 110 },
+      instr:  { x: M + 399, w: CW - 401 }
+    };
 
-    // Ensure all investigations fit on the same page
+    /** Build priority and fasting string */
+    const buildCondStr = (inv) => {
+      const parts = [];
+      if (inv.priority) parts.push(`Priority: ${safeStr(inv.priority).toUpperCase()}`);
+      if (inv.fasting) parts.push(`Fasting: ${safeStr(inv.fasting)}`);
+      return parts.length > 0 ? parts.join('\n') : 'Routine';
+    };
+
+    // Pre-calculate total height for all investigations to keep them together
+    let invTotalH = 30 + 22; // title bar + table header
+    invList.forEach((inv) => {
+      const testName = safeStr(inv.testName) || safeStr(inv);
+      const condStr = buildCondStr(inv);
+      const reasonStr = safeStr(inv.reason) || '-';
+      const instrStr = safeStr(inv.specialInstructions) || '-';
+
+      doc.font('Helvetica-Bold').fontSize(9);
+      const nameH = doc.heightOfString(testName, { width: invCol.name.w - 8 });
+      doc.font('Helvetica').fontSize(8.5);
+      const condH = doc.heightOfString(condStr, { width: invCol.cond.w - 8 });
+      const reasonH = doc.heightOfString(reasonStr, { width: invCol.reason.w - 8 });
+      const instrH = doc.heightOfString(instrStr, { width: invCol.instr.w - 8 });
+
+      const rowH = Math.max(26, nameH + 10, condH + 10, reasonH + 10, instrH + 10);
+      invTotalH += rowH;
+    });
+
+    if (invNotes) {
+      invTotalH += 24;
+    }
+    invTotalH += 10;
+
     ensureSpace(invTotalH);
 
-    titleBar('INVESTIGATIONS REQUIRED');
+    titleBar('INVESTIGATIONS & DIAGNOSTIC TESTS REQUIRED');
+
+    // ── table header ──
+    doc.rect(M + 1, y, CW - 2, 20).fill(C.tblHdr);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text);
+    doc.text('No.',                  invCol.num.x + 2,    y + 5, { width: invCol.num.w - 4,   align: 'center' });
+    doc.text('Investigation / Test', invCol.name.x + 4,   y + 5, { width: invCol.name.w - 8 });
+    doc.text('Priority & Fasting',   invCol.cond.x + 4,   y + 5, { width: invCol.cond.w - 8,   align: 'center' });
+    doc.text('Clinical Reason',      invCol.reason.x + 4, y + 5, { width: invCol.reason.w - 8 });
+    doc.text('Special Instructions', invCol.instr.x + 4,  y + 5, { width: invCol.instr.w - 8 });
+
+    // header borders
+    doc.strokeColor(C.text).lineWidth(0.5);
+    doc.moveTo(M + 1, y).lineTo(PW - M - 1, y).stroke();
+    doc.moveTo(M + 1, y + 20).lineTo(PW - M - 1, y + 20).stroke();
+    [invCol.name.x, invCol.cond.x, invCol.reason.x, invCol.instr.x].forEach(cx => {
+      doc.moveTo(cx, y).lineTo(cx, y + 20).stroke();
+    });
+    doc.moveTo(M + 1, y).lineTo(M + 1, y + 20).stroke();
+    doc.moveTo(PW - M - 1, y).lineTo(PW - M - 1, y + 20).stroke();
+    y += 22;
+
+    // ── data rows ──
     invList.forEach((inv, idx) => {
       const testName = safeStr(inv.testName) || safeStr(inv);
-      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(C.text);
-      doc.text(`${idx + 1}. ${testName}`, M + 12, y, { width: CW - 30 });
-      const reason = safeStr(inv.reason);
-      if (reason) {
-        doc.font('Helvetica').fontSize(9).fillColor(C.text)
-          .text(`   ${reason}`, M + 22, y + 13, { width: CW - 40 });
-        y += 13;
+      const condStr = buildCondStr(inv);
+      const reasonStr = safeStr(inv.reason) || '-';
+      const instrStr = safeStr(inv.specialInstructions) || '-';
+
+      doc.font('Helvetica-Bold').fontSize(9);
+      const nameH = doc.heightOfString(testName, { width: invCol.name.w - 8 });
+      doc.font('Helvetica').fontSize(8.5);
+      const condH = doc.heightOfString(condStr, { width: invCol.cond.w - 8 });
+      const reasonH = doc.heightOfString(reasonStr, { width: invCol.reason.w - 8 });
+      const instrH = doc.heightOfString(instrStr, { width: invCol.instr.w - 8 });
+
+      const rowH = Math.max(26, nameH + 10, condH + 10, reasonH + 10, instrH + 10);
+      const rowY = y;
+
+      // Alternate row background
+      if (idx % 2 === 0) {
+        doc.rect(M + 1, rowY, CW - 2, rowH).fill('#F8FCFA');
       }
-      y += 14;
-      const details = [];
-      if (inv.priority) details.push(`Priority: ${safeStr(inv.priority)}`);
-      if (inv.fasting)  details.push(`Fasting required: ${safeStr(inv.fasting)}`);
-      if (details.length) {
-        doc.font('Helvetica-Oblique').fontSize(9).fillColor('#666666')
-          .text(details.join(' \u2014 '), M + 22, y, { width: CW - 40 });
-        y += 13;
-      }
-      // Render special instructions if present
-      const specInstr = safeStr(inv.specialInstructions);
-      if (specInstr) {
-        doc.font('Helvetica-Oblique').fontSize(8.5).fillColor('#555555')
-          .text(`Instructions: ${specInstr}`, M + 22, y, { width: CW - 40 });
-        const instrH = doc.heightOfString(`Instructions: ${specInstr}`, { width: CW - 40 });
-        y += Math.max(12, instrH + 1);
-      }
-      y += 2;
-    });
-    if (invNotes) {
-      const notesStr = safeStr(invNotes);
+
+      // No.
+      doc.font('Helvetica').fontSize(9).fillColor(C.text)
+        .text(`${idx + 1}`, invCol.num.x + 2, rowY + 6, { width: invCol.num.w - 4, align: 'center' });
+
+      // Test Name
       doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
-        .text('Note: ', M + 10, y, { continued: true });
-      doc.font('Helvetica').text(notesStr, { width: CW - 60 });
-      y += 14;
+        .text(testName, invCol.name.x + 4, rowY + 6, { width: invCol.name.w - 8 });
+
+      // Priority & Fasting
+      doc.font('Helvetica').fontSize(8.5).fillColor(inv.priority === 'urgent' ? C.warn : C.text)
+        .text(condStr, invCol.cond.x + 4, rowY + 6, { width: invCol.cond.w - 8, align: 'center' });
+
+      // Clinical Reason
+      doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
+        .text(reasonStr, invCol.reason.x + 4, rowY + 6, { width: invCol.reason.w - 8 });
+
+      // Special Instructions
+      doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
+        .text(instrStr, invCol.instr.x + 4, rowY + 6, { width: invCol.instr.w - 8 });
+
+      // Row borders
+      doc.strokeColor(C.border).lineWidth(0.3);
+      doc.moveTo(M + 1, rowY + rowH).lineTo(PW - M - 1, rowY + rowH).stroke();
+      [M + 1, invCol.name.x, invCol.cond.x, invCol.reason.x, invCol.instr.x, PW - M - 1].forEach(cx => {
+        doc.moveTo(cx, rowY).lineTo(cx, rowY + rowH).stroke();
+      });
+
+      y = rowY + rowH;
+    });
+
+    y += 6;
+
+    if (invNotes) {
+      subHdr('General Lab / Diagnostic Notes:', M + 10, C.warn);
+      warnBullet(safeStr(invNotes));
+      y += 4;
     }
     y += 6;
   }
