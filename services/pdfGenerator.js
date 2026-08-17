@@ -365,41 +365,39 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   const rawDocAddress = doctor.address || doctor.clinicAddress || prescription.doctorAddress || prescription.clinicAddress || '';
   const docAddress = formatCityState(rawDocAddress, doctor.city || prescription.doctorCity, doctor.state || prescription.doctorState);
 
-  // Measure text height to dynamically size the header box without empty white space
-  let docLines = 1; // Dr. Name + Specialization
-  if (docRegNo) docLines++;
-  if (drPhone) docLines++;
-  if (docAddress) docLines++;
-
   const clinicLogoBuf = await loadImageBuffer(doctor.clinicLogo);
-  const hdrH = clinicLogoBuf ? Math.max(54, docLines * 12.5 + 14, 58) : Math.max(48, docLines * 12.5 + 12);
+  const hdrH = clinicLogoBuf ? 48 : 38;
 
   doc.roundedRect(M, y, CW, hdrH, 3).fillAndStroke(C.hdrBg, C.primary);
   doc.lineWidth(1.2);
 
-  doc.font('Helvetica-Bold').fontSize(13.5).fillColor(C.primary);
+  // Line 1: Doctor Name + Specialization
+  doc.font('Helvetica-Bold').fontSize(13).fillColor(C.primary);
   const nameW = doc.widthOfString(doctorDisplayName);
-  doc.text(doctorDisplayName, M + 8, y + 7);
+  doc.text(doctorDisplayName, M + 8, y + 6);
 
   if (docSpecialization) {
     doc.font('Helvetica-Oblique').fontSize(9.5).fillColor('#444444')
-      .text(`  |  ${docSpecialization}`, M + 8 + nameW, y + 9.5, { width: Math.max(120, CW * 0.62 - nameW) });
+      .text(`  |  ${docSpecialization}`, M + 8 + nameW, y + 8.5, { width: Math.max(120, CW * 0.62 - nameW) });
   }
 
-  let hY = y + 22;
-  if (docRegNo) {
-    doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-      .text(`Reg. No: ${docRegNo}`, M + 8, hY);
-    hY += 11.5;
+  // Line 2: Reg. No & Phone on Left / Center, Address on Right
+  const hY = y + 21.5;
+  doc.font('Helvetica').fontSize(8.5).fillColor(C.text);
+
+  const leftParts = [];
+  if (docRegNo) leftParts.push(`Reg. No: ${docRegNo}`);
+  if (drPhone) leftParts.push(`Phone: ${drPhone}`);
+  const leftStr = leftParts.join('   |   ');
+
+  if (leftStr) {
+    doc.text(leftStr, M + 8, hY, { width: CW * 0.48 });
   }
-  if (drPhone) {
-    doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-      .text(`Phone: ${drPhone}`, M + 8, hY, { width: CW * 0.6 });
-    hY += 11.5;
-  }
+
   if (docAddress) {
-    doc.font('Helvetica').fontSize(8.5).fillColor(C.text)
-      .text(`Address: ${docAddress}`, M + 8, hY, { width: CW * 0.6 });
+    const addrX = leftStr ? (M + CW * 0.50) : (M + 8);
+    const addrW = leftStr ? (CW * 0.48) : (CW * 0.90);
+    doc.text(`Address: ${docAddress}`, addrX, hY, { width: addrW });
   }
 
   // Right side – clinic logo (or clinic name fallback)
