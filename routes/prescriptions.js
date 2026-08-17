@@ -1180,7 +1180,10 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
         email: prescription.patientEmail || '',
         dateOfBirth: prescription.patientDOB || '',
         gender: prescription.patientGender || '',
-        phone: prescription.patientPhone || prescription.contactNumber || ''
+        phone: prescription.patientPhone || prescription.contactNumber || '',
+        address: prescription.patientAddress || '',
+        city: prescription.patientCity || '',
+        state: prescription.patientState || ''
       };
     }
     
@@ -1189,9 +1192,21 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
         id: prescDoctorId || 'doctor-id',
         firstName: prescription.doctorName ? prescription.doctorName.split(' ')[0] : 'Doctor',
         lastName: prescription.doctorName ? prescription.doctorName.split(' ').slice(1).join(' ') : '',
-        specialization: prescription.doctorSpecialization || 'General Practitioner',
-        licenseNumber: prescription.doctorLicenseNumber || ''
+        specialization: prescription.doctorSpecialization || 'General Physician',
+        licenseNumber: prescription.doctorLicenseNumber || '',
+        address: prescription.doctorAddress || prescription.clinicAddress || '',
+        phone: prescription.doctorPhone || prescription.contactNumber || '',
+        clinicName: prescription.clinicName || '',
+        clinicLogo: prescription.clinicLogo || '',
+        signature: prescription.doctorSignature || '',
+        stamp: prescription.doctorStamp || ''
       };
+    } else {
+      if (!doctorUser.address && prescription.doctorAddress) doctorUser.address = prescription.doctorAddress;
+      if (!doctorUser.signature && prescription.doctorSignature) doctorUser.signature = prescription.doctorSignature;
+      if (!doctorUser.stamp && prescription.doctorStamp) doctorUser.stamp = prescription.doctorStamp;
+      if (!doctorUser.clinicLogo && prescription.clinicLogo) doctorUser.clinicLogo = prescription.clinicLogo;
+      if (!doctorUser.clinicName && prescription.clinicName) doctorUser.clinicName = prescription.clinicName;
     }
     
     // Generate PDF using the comprehensive prescription PDF generator
