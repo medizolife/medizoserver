@@ -154,7 +154,7 @@ const PW = 595.28;
 const PH = 841.89;
 const M = 40;
 const CW = PW - 2 * M;
-const FOOTER_ZONE = 92;          // space reserved at page bottom for footer
+const FOOTER_ZONE = 60;          // space reserved at page bottom for footer
 const maxY = PH - FOOTER_ZONE;
 
 // ====================================================================
@@ -285,15 +285,13 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   };
 
   const addFooter = () => {
-    const fY = PH - FOOTER_ZONE + 6;
+    const fY = PH - FOOTER_ZONE + 8;
     doc.moveTo(M, fY).lineTo(PW - M, fY).strokeColor('#AAAAAA').lineWidth(0.5).stroke();
-    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#666666')
-      .text('This is a digitally generated prescription by www.medizo.life', M, fY + 5, { width: CW, align: 'center' });
-    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#666666')
-      .text('For verification, scan the QR code to get the Prescription ID', M, fY + 18, { width: CW, align: 'center' });
+    doc.font('Helvetica-Oblique').fontSize(8.5).fillColor('#666666')
+      .text('For verification, scan the QR code to get the Prescription ID on medizo.life', M, fY + 6, { width: CW, align: 'center' });
     if (emergLine) {
-      doc.font('Helvetica-Bold').fontSize(10).fillColor(C.text)
-        .text(`24x7 Emergency Helpline: ${emergLine}`, M, fY + 31, { width: CW, align: 'center' });
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(C.text)
+        .text(`24x7 Emergency Helpline: ${emergLine}`, M, fY + 18, { width: CW, align: 'center' });
     }
   };
 
