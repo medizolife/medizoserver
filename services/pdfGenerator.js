@@ -48,6 +48,36 @@ async function loadImageBuffer(urlPath) {
   return null;
 }
 
+/**
+ * Draw a vector-rendered QR code using PDFKit path rectangles.
+ * 100% vector, zero external image decoders needed, guaranteed to render across all environments.
+ */
+function drawVectorQr(doc, text, x, y, size, darkColor = '#0A2540', lightColor = '#FFFFFF') {
+  try {
+    const qr = QRCode.create(String(text || ''), { errorCorrectionLevel: 'M' });
+    const modules = qr.modules;
+    const count = modules.size;
+    const cellSize = size / count;
+
+    if (lightColor) {
+      doc.rect(x - 2, y - 2, size + 4, size + 4).fillColor(lightColor).fill();
+    }
+
+    doc.fillColor(darkColor);
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        if (modules.get(r, c)) {
+          doc.rect(x + c * cellSize, y + r * cellSize, cellSize + 0.05, cellSize + 0.05).fill();
+        }
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error('drawVectorQr error:', e.message);
+    return false;
+  }
+}
+
 // ── Indian States List for Address Parsing ──
 const INDIAN_STATES = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
@@ -240,17 +270,27 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         else if (typeof a === 'string') allergyList = a.split(',').map(s => s.trim()).filter(Boolean);
       }
 
-      const pName      = `${patient.firstName || ''} ${patient.middleName || ''} ${patient.lastName || ''}`.replace(/\s+/g, ' ').trim() || 'Patient';
+      const pName      = `${patient.firstName || ''} ${patient.middleName || ''} ${patient.lastName || ''}`.replace(/\s+/g, ' ').trim() || prescription.patientName || 'Patient';
       let pAge = '';
-      if (patient.dateOfBirth) {
-        const dobTime = new Date(patient.dateOfBirth).getTime();
+      const dobVal = patient.dateOfBirth || patient.dob || prescription.patientDOB || prescription.patientDateOfBirth || prescription.dob;
+      if (dobVal) {
+        const dobTime = new Date(dobVal).getTime();
         if (!isNaN(dobTime)) {
           const years = Math.floor((Date.now() - dobTime) / (365.25 * 86400000));
-          if (years >= 0 && years < 150) pAge = `${years} Years`;
+          if (years >= 0 && years < 150) {
+            pAge = `${years} Yrs`;
+          }
         }
       }
-      const pGender    = patient.gender ? patient.gender.charAt(0).toUpperCase() + patient.gender.slice(1) : '';
-      const pAgeGender = [pAge, pGender].filter(Boolean).join(' / ');
+      if (!pAge) {
+        const directAge = patient.age || patient.patientAge || prescription.patientAge || prescription.age;
+        if (directAge) {
+          pAge = String(directAge).toLowerCase().includes('yr') ? String(directAge) : `${directAge} Yrs`;
+        }
+      }
+      const rawGender  = patient.gender || prescription.patientGender || prescription.gender || '';
+      const pGender    = rawGender ? rawGender.charAt(0).toUpperCase() + rawGender.slice(1).toLowerCase() : '';
+      const pAgeGender = [pAge, pGender].filter(Boolean).join(' / ') || 'N/A';
       const pId        = prescription.patientDisplayId || (patient.id ? `PT-${String(patient.id).slice(-6)}` : '');
       const pPhone     = patient.contactNumber || patient.phone || '';
       const pEmail     = patient.email || '';
@@ -354,22 +394,28 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       const clinicLogoBuf = await loadImageBuffer(doctor.clinicLogo);
       const hdrH = clinicLogoBuf ? 48 : 38;
+      const topY = y;
+      const qrSize = 78;
+      const qrX = PW - M - qrSize;
+      const qrY = topY - 1;
+      const drBoxW = qrX - M - 10;
 
-      doc.roundedRect(M, y, CW, hdrH, 3).fillAndStroke(C.hdrBg, C.primary);
-      doc.lineWidth(1.2);
+      // ─── 1. HEADER BOX (DOCTOR DETAILS - REDUCED WIDTH) ───────────────
+      doc.roundedRect(M, topY, drBoxW, hdrH, 3).fillAndStroke(C.hdrBg, C.primary);
+      doc.lineWidth(1.0);
 
       // Line 1: Doctor Name + Specialization (Left) | Clinic Name (Right)
-      doc.font('Helvetica-Bold').fontSize(13).fillColor(C.primary);
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(C.primary);
       const nameW = doc.widthOfString(doctorDisplayName);
-      doc.text(doctorDisplayName, M + 8, y + 6);
+      doc.text(doctorDisplayName, M + 8, topY + 6);
 
       if (docSpecialization) {
         doc.font('Helvetica-Oblique').fontSize(9.5).fillColor('#444444')
-          .text(`  |  ${docSpecialization}`, M + 8 + nameW, y + 8.5, { width: Math.max(120, CW * 0.62 - nameW) });
+          .text(`  |  ${docSpecialization}`, M + 8 + nameW, topY + 8, { width: Math.max(100, drBoxW * 0.60 - nameW) });
       }
 
       // Line 2: Reg. No & Phone on Left / Center, Address on Right
-      const hY = y + 21.5;
+      const hY = topY + 21.5;
       doc.font('Helvetica').fontSize(8.5).fillColor(C.text);
 
       const leftParts = [];
@@ -378,77 +424,59 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
       const leftStr = leftParts.join('   |   ');
 
       if (leftStr) {
-        doc.text(leftStr, M + 8, hY, { width: CW * 0.48 });
+        doc.text(leftStr, M + 8, hY, { width: drBoxW * 0.48 });
       }
 
       if (docAddress) {
-        const addrX = leftStr ? (M + CW * 0.50) : (M + 8);
-        const addrW = leftStr ? (CW * 0.48) : (CW * 0.90);
+        const addrX = leftStr ? (M + drBoxW * 0.50) : (M + 8);
+        const addrW = leftStr ? (drBoxW * 0.48) : (drBoxW * 0.92);
         doc.text(`Address: ${docAddress}`, addrX, hY, { width: addrW });
       }
 
-      // Right side – clinic logo (or clinic name fallback)
+      // Clinic name / logo if present
       if (clinicLogoBuf) {
         try {
-          const logoMaxW = 110, logoMaxH = hdrH - 10;
-          const logoX = PW - M - logoMaxW - 8;
-          const logoY = y + 5;
-          doc.image(clinicLogoBuf, logoX, logoY, {
+          const logoMaxW = 80, logoMaxH = hdrH - 10;
+          const logoX = M + drBoxW - logoMaxW - 6;
+          doc.image(clinicLogoBuf, logoX, topY + 5, {
             fit: [logoMaxW, logoMaxH],
             align: 'center',
             valign: 'center'
           });
         } catch (logoErr) {
-          console.error('Clinic logo render error:', logoErr);
           const clinicName = doctor.clinicName || '';
           if (clinicName) {
-            doc.font('Helvetica-Bold').fontSize(12).fillColor(C.primary)
-              .text(clinicName, M, y + 10, { width: CW - 10, align: 'right' });
+            doc.font('Helvetica-Bold').fontSize(10).fillColor(C.primary)
+              .text(clinicName, M, topY + 8, { width: drBoxW - 8, align: 'right' });
           }
         }
       } else {
         const clinicName = doctor.clinicName || '';
         if (clinicName) {
-          doc.font('Helvetica-Bold').fontSize(12).fillColor(C.primary)
-            .text(clinicName, M, y + 10, { width: CW - 10, align: 'right' });
+          doc.font('Helvetica-Bold').fontSize(10).fillColor(C.primary)
+            .text(clinicName, M, topY + 8, { width: drBoxW - 8, align: 'right' });
         }
       }
 
-      y += hdrH + 6;
-
-      // ─── 2. PRESCRIPTION ID + QR CODE METADATA BAR ───────────────────
-      const qrSize = 36;
-      const rxY = y;
-      
-      // Left side: Prescription ID and Date & Time
+      // ─── 2. PRESCRIPTION METADATA (LEFT SIDE UNDER DR BOX) ────────────
+      const metaY = topY + hdrH + 4;
       doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text)
-        .text('Prescription ID:', M, rxY + 3, { continued: true });
+        .text('Prescription ID:', M, metaY + 2, { continued: true });
       doc.font('Helvetica-Bold').fillColor(C.primary).text(`  ${rxId}`);
       
       doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.text)
-        .text('Date & Time:', M, rxY + 16, { continued: true });
+        .text('Date & Time:', M, metaY + 14, { continued: true });
       doc.font('Helvetica').fillColor(C.text).text(`      ${fDate}, ${fTime}`);
 
-      // Right side: QR code
-      try {
-        const qrPayload = `https://medizo.life/verify-prescription?id=${prescriptionId}`;
-        const qrUrl = await QRCode.toDataURL(qrPayload, {
-          width: 160,
-          margin: 0,
-          color: { dark: '#000000', light: '#FFFFFF' },
-          errorCorrectionLevel: 'M'
-        });
-        doc.image(qrUrl, PW - M - qrSize, rxY - 1, { width: qrSize, height: qrSize });
-      } catch (e) {
-        try {
-          const qrUrl = await QRCode.toDataURL(String(prescriptionId), { width: 160, margin: 0 });
-          doc.image(qrUrl, PW - M - qrSize, rxY - 1, { width: qrSize, height: qrSize });
-        } catch (err2) {
-          console.error('QR generation error:', err2);
-        }
-      }
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(C.secondary)
+        .text('Verification Portal:', M, metaY + 26, { continued: true });
+      doc.font('Helvetica').fillColor(C.text).text('  medizoprod.medizolife.workers.dev');
 
-      y = rxY + qrSize + 5;
+      // ─── 3. BORDERLESS LARGE PURE BLACK VECTOR QR CODE (RIGHT SIDE) ───
+      const qrPayload = `https://medizoprod.medizolife.workers.dev/dashboard?rxId=${prescriptionId}`;
+      drawVectorQr(doc, qrPayload, qrX, qrY, qrSize, '#000000', null);
+
+      y = topY + qrSize + 6;
 
       // ─── 3. PATIENT INFORMATION (COMPACT 2-COLUMN) ───────────────────
       {
@@ -757,10 +785,18 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
         const buildDosStr = (med) => {
           let s = safeStr(med.dosage);
+          const intervalDays = Number(med.intervalDays) || 0;
+          let intervalLabel = '';
+          if (intervalDays > 1) {
+            intervalLabel = intervalDays === 2 ? 'Alternate Days (Every 2d)' : intervalDays === 7 ? 'Weekly (Every 7d)' : `Every ${intervalDays} Days`;
+          }
+
           if (med.frequency) {
             const freqMap = {'1': 'Once daily', '2': 'Twice daily', '3': 'Thrice daily', '4': 'Four times daily', 'SOS': 'As needed (SOS)'};
             const freqLabel = freqMap[safeStr(med.frequency)] || safeStr(med.frequency);
             s = s ? `${s}\n(${freqLabel})` : freqLabel;
+          } else if (intervalLabel) {
+            s = s ? `${s}\n(${intervalLabel})` : intervalLabel;
           }
           return s || '-';
         };
@@ -1309,4 +1345,242 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
   });
 }
 
-module.exports = { generatePrescriptionPDF };
+/**
+ * Generate official Indian Clinical "Bill of Supply" or "Tax Invoice" PDF
+ * @param {Object} bill - Bill data object with items and payments
+ * @param {Object} doctor - Attending doctor user record
+ * @param {Object} patient - Patient user record
+ * @returns {Promise<Buffer>}
+ */
+async function generateBillPDF(bill, doctor = {}, patient = {}) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const doc = new PDFDocument({
+        size: 'A4',
+        margins: { top: 30, bottom: 30, left: 35, right: 35 },
+        bufferPages: true,
+        autoFirstPage: true
+      });
+
+      const chunks = [];
+      doc.on('data', chunk => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', err => reject(err));
+
+      const PW = 595.28;
+      const PH = 841.89;
+      const M = 35;
+      const CW = PW - 2 * M; // 525.28
+
+      const isExempt = bill.gstType === 'exempt' || !bill.gstRate || bill.gstRate === 0;
+      const docTitle = isExempt ? 'BILL OF SUPPLY' : 'TAX INVOICE';
+      const docSub = isExempt ? '(Issued under Section 31(3)(c) of CGST Act - Healthcare SAC 999312)' : '(Tax Invoice under Section 31 of CGST Act)';
+
+      // Colors
+      const primaryColor = '#0E3B33';
+      const accentColor = '#00C896';
+      const textColor = '#1F2937';
+      const mutedColor = '#6B7280';
+      const bgCard = '#F3F4F6';
+
+      let y = 35;
+
+      // ─── 1. TOP CLINIC / DOCTOR HEADER ─────
+      // Doctor & Clinic Name
+      const clinicName = doctor.clinicName || 'MEDIZO HEALTHCARE CLINIC';
+      const docName = `Dr. ${doctor.firstName || ''} ${doctor.lastName || ''}`.trim() || 'Attending Physician';
+      const docSpec = doctor.specialization || 'General Practitioner';
+      const docReg = doctor.licenseNumber || doctor.registrationNumber ? `Reg No: ${doctor.licenseNumber || doctor.registrationNumber}` : '';
+      const clinicAddr = doctor.clinicAddress || doctor.address || 'India';
+      const clinicPhone = doctor.phone || doctor.contactNumber || '';
+
+      doc.font('Helvetica-Bold').fontSize(14).fillColor(primaryColor).text(clinicName, M, y, { width: 330 });
+      y += 18;
+      doc.font('Helvetica-Bold').fontSize(11).fillColor(textColor).text(docName, M, y, { width: 330 });
+      y += 14;
+      doc.font('Helvetica').fontSize(9).fillColor(mutedColor).text(`${docSpec}${docReg ? ' | ' + docReg : ''}`, M, y, { width: 330 });
+      y += 12;
+      doc.font('Helvetica').fontSize(8).fillColor(mutedColor).text(`${clinicAddr}${clinicPhone ? ' | Ph: ' + clinicPhone : ''}`, M, y, { width: 330 });
+
+      // Title & Invoice Meta Box (Right aligned)
+      const rBoxX = PW - M - 160;
+      let rY = 35;
+      doc.rect(rBoxX, rY, 160, 65).fillColor(bgCard).fill();
+      doc.rect(rBoxX, rY, 160, 65).strokeColor('#E5E7EB').lineWidth(1).stroke();
+
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(primaryColor).text(docTitle, rBoxX, rY + 8, { width: 160, align: 'center' });
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(textColor).text(`Bill #: ${bill.billNumber || 'N/A'}`, rBoxX + 10, rY + 26);
+      doc.font('Helvetica').fontSize(8).fillColor(mutedColor).text(`Date: ${bill.createdAt ? new Date(bill.createdAt).toLocaleDateString('en-IN') : new Date().toLocaleDateString('en-IN')}`, rBoxX + 10, rY + 38);
+      
+      const statusText = (bill.status || 'draft').toUpperCase();
+      const statusColor = bill.status === 'paid' ? '#059669' : (bill.status === 'partially_paid' ? '#D97706' : '#2563EB');
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(statusColor).text(`Status: ${statusText}`, rBoxX + 10, rY + 50);
+
+      y = Math.max(y + 20, 115);
+      doc.moveTo(M, y).lineTo(PW - M, y).strokeColor('#E5E7EB').lineWidth(1).stroke();
+      y += 10;
+
+      // ─── 2. PATIENT DETAILS ─────
+      doc.rect(M, y, CW, 46).fillColor('#F9FAFB').fill();
+      doc.rect(M, y, CW, 46).strokeColor('#E5E7EB').lineWidth(0.8).stroke();
+
+      const patName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Valued Patient';
+      const patId = bill.patientDisplayId || (patient.id ? `PT-${patient.id.substring(0, 6).toUpperCase()}` : 'N/A');
+      const patAge = patient.dateOfBirth || patient.age ? `Age: ${patient.age || 'N/A'}` : '';
+      const patGender = patient.gender ? `Gender: ${patient.gender}` : '';
+      const patPhone = patient.phone || patient.contactNumber ? `Phone: ${patient.phone || patient.contactNumber}` : '';
+
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(mutedColor).text('PATIENT INFORMATION', M + 10, y + 6);
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(textColor).text(patName, M + 10, y + 18);
+      doc.font('Helvetica').fontSize(8.5).fillColor(mutedColor).text(`Patient ID: ${patId}`, M + 10, y + 31);
+
+      doc.font('Helvetica').fontSize(8.5).fillColor(mutedColor).text(`${patAge} ${patGender ? '| ' + patGender : ''}`, M + 260, y + 18);
+      doc.font('Helvetica').fontSize(8.5).fillColor(mutedColor).text(patPhone, M + 260, y + 31);
+
+      if (doctor.clinicGstin) {
+        doc.font('Helvetica-Bold').fontSize(8).fillColor(primaryColor).text(`Doc GSTIN: ${doctor.clinicGstin}`, M + 390, y + 18);
+      }
+      if (bill.patientGstin) {
+        doc.font('Helvetica-Bold').fontSize(8).fillColor(primaryColor).text(`Pat GSTIN: ${bill.patientGstin}`, M + 390, y + 31);
+      }
+
+      y += 56;
+
+      // ─── 3. ITEM TABLE HEADER ─────
+      const colX = { no: M, desc: M + 25, sac: M + 255, qty: M + 315, rate: M + 355, disc: M + 415, amt: M + 465 };
+      
+      doc.rect(M, y, CW, 20).fillColor(primaryColor).fill();
+      doc.font('Helvetica-Bold').fontSize(8).fillColor('#FFFFFF');
+      doc.text('#', colX.no + 4, y + 6);
+      doc.text('Service / Medical Item Description', colX.desc, y + 6);
+      doc.text('SAC / HSN', colX.sac, y + 6);
+      doc.text('Qty', colX.qty, y + 6, { align: 'center', width: 30 });
+      doc.text('Rate (₹)', colX.rate, y + 6, { align: 'right', width: 50 });
+      doc.text('Disc (₹)', colX.disc, y + 6, { align: 'right', width: 45 });
+      doc.text('Amount (₹)', colX.amt, y + 6, { align: 'right', width: 55 });
+
+      y += 20;
+
+      // ─── 4. LINE ITEMS ─────
+      const items = Array.isArray(bill.items) && bill.items.length > 0 ? bill.items : [
+        { description: 'Doctor Consultation', hsnSacCode: '999312', quantity: 1, unitPrice: bill.subtotal || bill.totalAmount || 500, discountAmount: bill.discount || 0, totalPrice: bill.totalAmount || 500 }
+      ];
+
+      items.forEach((item, idx) => {
+        const rowBg = idx % 2 === 0 ? '#FFFFFF' : '#F9FAFB';
+        doc.rect(M, y, CW, 20).fillColor(rowBg).fill();
+        doc.rect(M, y, CW, 20).strokeColor('#E5E7EB').lineWidth(0.5).stroke();
+
+        doc.font('Helvetica').fontSize(8).fillColor(textColor);
+        doc.text(String(idx + 1), colX.no + 4, y + 6);
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textColor).text(item.description || 'Medical Service', colX.desc, y + 6, { width: 225, ellipsis: true });
+        doc.font('Helvetica').fontSize(8).fillColor(mutedColor).text(item.hsnSacCode || '999312', colX.sac, y + 6);
+        doc.text(String(item.quantity || 1), colX.qty, y + 6, { align: 'center', width: 30 });
+        doc.text(Number(item.unitPrice || 0).toFixed(2), colX.rate, y + 6, { align: 'right', width: 50 });
+        doc.text(Number(item.discountAmount || 0).toFixed(2), colX.disc, y + 6, { align: 'right', width: 45 });
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(textColor).text(Number(item.totalPrice || 0).toFixed(2), colX.amt, y + 6, { align: 'right', width: 55 });
+
+        y += 20;
+      });
+
+      y += 10;
+
+      // ─── 5. SUMMARY & GST TAX BREAKDOWN ─────
+      const sumX = PW - M - 200;
+      doc.rect(sumX, y, 200, 110).fillColor('#F9FAFB').fill();
+      doc.rect(sumX, y, 200, 110).strokeColor('#E5E7EB').lineWidth(0.8).stroke();
+
+      let sY = y + 8;
+      const addSummaryLine = (label, val, isBold = false, color = textColor) => {
+        doc.font(isBold ? 'Helvetica-Bold' : 'Helvetica').fontSize(isBold ? 9.5 : 8.5).fillColor(color);
+        doc.text(label, sumX + 10, sY);
+        doc.text(`₹ ${Number(val || 0).toFixed(2)}`, sumX + 100, sY, { align: 'right', width: 90 });
+        sY += 14;
+      };
+
+      addSummaryLine('Gross Subtotal:', bill.subtotal || bill.totalAmount);
+      if (Number(bill.discount) > 0) {
+        addSummaryLine('Discount / Concession:', -Number(bill.discount), false, '#DC2626');
+      }
+      if (!isExempt && Number(bill.tax) > 0) {
+        if (bill.gstType === 'cgst_sgst') {
+          addSummaryLine(`CGST (${(Number(bill.gstRate) || 18)/2}%):`, bill.cgstAmount || (Number(bill.tax)/2));
+          addSummaryLine(`SGST (${(Number(bill.gstRate) || 18)/2}%):`, bill.sgstAmount || (Number(bill.tax)/2));
+        } else {
+          addSummaryLine(`IGST (${Number(bill.gstRate) || 18}%):`, bill.igstAmount || bill.tax);
+        }
+      }
+      
+      doc.moveTo(sumX + 8, sY).lineTo(sumX + 192, sY).strokeColor('#D1D5DB').lineWidth(0.8).stroke();
+      sY += 6;
+      addSummaryLine('Total Payable (INR):', bill.totalAmount, true, primaryColor);
+      addSummaryLine('Amount Paid:', bill.amountPaid || (bill.status === 'paid' ? bill.totalAmount : 0), false, '#059669');
+      addSummaryLine('Balance Due:', bill.balanceDue || (bill.status === 'paid' ? 0 : bill.totalAmount), true, Number(bill.balanceDue) > 0 ? '#DC2626' : '#059669');
+
+      // Left Box: UPI QR Code & Notes
+      const lBoxW = CW - 215;
+      doc.rect(M, y, lBoxW, 110).fillColor('#F9FAFB').fill();
+      doc.rect(M, y, lBoxW, 110).strokeColor('#E5E7EB').lineWidth(0.8).stroke();
+
+      if (bill.upiQrData || doctor.clinicUpiVpa) {
+        const upiUri = bill.upiQrData || `upi://pay?pa=${doctor.clinicUpiVpa}&pn=${encodeURIComponent(docName)}&am=${bill.balanceDue || bill.totalAmount}&cu=INR`;
+        drawVectorQr(doc, upiUri, M + 10, y + 10, 68, primaryColor, '#FFFFFF');
+        
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(primaryColor).text('Scan to Pay via UPI', M + 88, y + 15);
+        doc.font('Helvetica').fontSize(7.5).fillColor(mutedColor).text('Supports GPay, PhonePe, Paytm, BHIM', M + 88, y + 27);
+        if (doctor.clinicUpiVpa) {
+          doc.font('Helvetica-Bold').fontSize(7.5).fillColor(textColor).text(`UPI ID: ${doctor.clinicUpiVpa}`, M + 88, y + 39);
+        }
+      } else {
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(mutedColor).text('PAYMENT NOTES & REMARKS', M + 10, y + 15);
+        doc.font('Helvetica').fontSize(8).fillColor(textColor).text(bill.notes || 'Healthcare clinical services consultation.', M + 10, y + 30, { width: lBoxW - 20 });
+      }
+
+      if (isExempt) {
+        doc.font('Helvetica-Oblique').fontSize(7).fillColor(mutedColor)
+          .text('Note: Healthcare clinical services by authorized medical practitioner are exempt from GST under SAC 999312.', M + 10, y + 88, { width: lBoxW - 20 });
+      }
+
+      y += 125;
+
+      // ─── 6. PAYMENT TRANSACTIONS LEDGER (IF ANY) ─────
+      if (Array.isArray(bill.payments) && bill.payments.length > 0) {
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(primaryColor).text('PAYMENT TRANSACTIONS AUDIT', M, y);
+        y += 12;
+        bill.payments.forEach(p => {
+          doc.font('Helvetica').fontSize(7.5).fillColor(mutedColor)
+            .text(`• Paid ₹${Number(p.amountPaid).toFixed(2)} via ${(p.paymentMode || 'cash').toUpperCase()} on ${p.paidAt ? new Date(p.paidAt).toLocaleDateString('en-IN') : 'N/A'}${p.upiTransactionRef ? ' (Ref: ' + p.upiTransactionRef + ')' : ''}${p.receiptNumber ? ' | Receipt: ' + p.receiptNumber : ''}`, M, y);
+          y += 10;
+        });
+        y += 10;
+      }
+
+      // ─── 7. DOCTOR SIGNATURE & FOOTER ─────
+      const sigX = PW - M - 120;
+      doc.moveTo(sigX, PH - 70).lineTo(PW - M, PH - 70).strokeColor('#9CA3AF').lineWidth(0.8).stroke();
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(textColor).text('Authorized Signatory / Stamp', sigX, PH - 62, { width: 120, align: 'center' });
+      doc.font('Helvetica').fontSize(7.5).fillColor(mutedColor).text(docName, sigX, PH - 52, { width: 120, align: 'center' });
+
+      // Absolute Footer on all pages
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        const fY = PH - 25;
+        doc.moveTo(M, fY).lineTo(PW - M, fY).strokeColor('#E5E7EB').lineWidth(0.5).stroke();
+        doc.font('Helvetica').fontSize(7.5).fillColor(mutedColor)
+          .text('This is a computer-generated medical bill issued by Medizo Healthcare. For online verification visit medizo.life', M, fY + 6, {
+            width: CW,
+            align: 'center'
+          });
+      }
+
+      doc.end();
+    } catch (err) {
+      console.error('generateBillPDF error:', err);
+      reject(err);
+    }
+  });
+}
+
+module.exports = { generatePrescriptionPDF, generateBillPDF };
+

@@ -18,7 +18,7 @@ const {
   findExternalPrescriptionById,
   deleteExternalPrescription
 } = require('../models/prescription');
-const { findUserById } = require('../models/user');
+const { findUserById, updateUser } = require('../models/user');
 const { auth, doctor } = require('../middleware/auth');
 const { sendPrescriptionNotification } = require('../services/email');
 const { getFamilyProfileById } = require('../models/familyProfile');
@@ -108,36 +108,71 @@ router.get('/', auth, async (req, res) => {
       prescriptions = await findPrescriptionsByDoctorId(userId);
       console.log('Found', prescriptions.length, 'prescriptions for doctor');
       
+      // Helper to safely resolve patient name without wiping stored prescription data
+      const resolvePatientData = async (prescription) => {
+        let patient = null;
+        let profile = null;
+        try {
+          if (prescription.patientId) {
+            patient = await findUserById(prescription.patientId);
+            if (!patient) {
+              try {
+                profile = await getFamilyProfileById(prescription.patientId);
+              } catch (e) {}
+            }
+          }
+          if (!patient && prescription.accountId) {
+            patient = await findUserById(prescription.accountId);
+          }
+        } catch (e) {}
+
+        let resolvedName = '';
+        if (patient && (patient.firstName || patient.lastName)) {
+          resolvedName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim();
+        } else if (profile && (profile.firstName || profile.lastName)) {
+          resolvedName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+        }
+        if (!resolvedName || resolvedName.toLowerCase() === 'unknown patient') {
+          resolvedName = (prescription.patientName && prescription.patientName.toLowerCase() !== 'unknown patient')
+            ? prescription.patientName.trim()
+            : 'Patient';
+        }
+
+        const phone = patient?.phone || patient?.contactNumber || patient?.mobile || profile?.phone || prescription.patientPhone || prescription.contactNumber || 'N/A';
+        const email = patient?.email || prescription.patientEmail || 'N/A';
+
+        return {
+          ...prescription,
+          patientName: resolvedName,
+          patientEmail: email,
+          patientMobile: phone,
+          patientPhone: phone,
+          contactNumber: phone
+        };
+      };
+
       // Enhance with patient information safely
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
         try {
-          let patient = null;
-          if (prescription.patientId) {
-            patient = await findUserById(prescription.patientId);
-          }
-          return {
-            ...prescription,
-            patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
-            patientEmail: patient ? patient.email || 'N/A' : 'N/A',
-            patientMobile: patient ? (patient.mobile || patient.phone || patient.contactNumber || 'N/A') : 'N/A',
-            patientPhone: patient ? (patient.phone || patient.contactNumber || patient.mobile || 'N/A') : 'N/A',
-            contactNumber: patient ? (patient.contactNumber || patient.phone || patient.mobile || 'N/A') : 'N/A'
-          };
+          return await resolvePatientData(prescription);
         } catch (err) {
           console.error('Error enhancing prescription with patient info:', err);
           return {
             ...prescription,
-            patientName: 'Unknown Patient',
-            patientEmail: 'N/A',
-            patientMobile: 'N/A',
-            patientPhone: 'N/A',
-            contactNumber: 'N/A'
+            patientName: (prescription.patientName && prescription.patientName.toLowerCase() !== 'unknown patient') ? prescription.patientName : 'Patient',
+            patientEmail: prescription.patientEmail || 'N/A',
+            patientMobile: prescription.patientPhone || 'N/A',
+            patientPhone: prescription.patientPhone || 'N/A',
+            contactNumber: prescription.contactNumber || 'N/A'
           };
         }
       }));
     } else if (role === 'patient') {
-      prescriptions = await findPrescriptionsByPatientId(userId);
-      console.log('Found', prescriptions.length, 'prescriptions for patient');
+      const userObj = await findUserById(userId);
+      const userEmail = userObj?.email || req.user?.email || '';
+      const userPhone = userObj?.phone || userObj?.contactNumber || req.user?.phone || '';
+      prescriptions = await findPrescriptionsByPatientId(userId, { email: userEmail, phone: userPhone });
+      console.log('Found', prescriptions.length, 'prescriptions for patient:', userId, userEmail);
       
       // Enhance with doctor information safely
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
@@ -146,22 +181,26 @@ router.get('/', auth, async (req, res) => {
           if (prescription.doctorId) {
             doc = await findUserById(prescription.doctorId);
           }
+          let dName = (prescription.doctorName && prescription.doctorName.trim()) 
+            || (doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Dr. Medical Practitioner');
+          if (!dName || dName === 'Dr.' || dName.toLowerCase() === 'doctor') dName = 'Dr. Medical Practitioner';
+
           return {
             ...prescription,
-            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
-            doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician'
+            doctorName: dName,
+            doctorSpecialization: doc ? doc.specialization || 'General Physician' : (prescription.doctorSpecialization || 'General Physician')
           };
         } catch (err) {
           console.error('Error enhancing prescription with doctor info:', err);
           return {
             ...prescription,
-            doctorName: 'Unknown Doctor',
-            doctorSpecialization: 'General Physician'
+            doctorName: (prescription.doctorName && prescription.doctorName.trim()) || 'Dr. Medical Practitioner',
+            doctorSpecialization: prescription.doctorSpecialization || 'General Physician'
           };
         }
       }));
     } else if (role === 'pharmacist') {
-      // Pharmacist sees prescriptions dispensed by them
+      // Pharmacist sees prescriptions dispensed by them or active
       try {
         const { results } = await queryD1(
           `SELECT * FROM prescriptions WHERE 
@@ -170,8 +209,6 @@ router.get('/', auth, async (req, res) => {
            ORDER BY updatedAt DESC`,
           [userId]
         );
-        // Parse JSON fields
-        const { getPrescriptions: getAll } = require('../models/prescription');
         // Use raw results and parse them
         prescriptions = results.map(row => {
           const rx = { ...row };
@@ -196,21 +233,50 @@ router.get('/', auth, async (req, res) => {
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
         try {
           let patient = null;
+          let profile = null;
           let doc = null;
-          if (prescription.patientId) patient = await findUserById(prescription.patientId);
+          if (prescription.patientId) {
+            patient = await findUserById(prescription.patientId);
+            if (!patient) {
+              try { profile = await getFamilyProfileById(prescription.patientId); } catch (e) {}
+            }
+          }
+          if (!patient && prescription.accountId) {
+            patient = await findUserById(prescription.accountId);
+          }
           if (prescription.doctorId) doc = await findUserById(prescription.doctorId);
+
+          let resolvedName = '';
+          if (patient && (patient.firstName || patient.lastName)) {
+            resolvedName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim();
+          } else if (profile && (profile.firstName || profile.lastName)) {
+            resolvedName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+          }
+          if (!resolvedName || resolvedName.toLowerCase() === 'unknown patient') {
+            resolvedName = (prescription.patientName && prescription.patientName.toLowerCase() !== 'unknown patient')
+              ? prescription.patientName.trim()
+              : 'Patient';
+          }
+
+          const phone = patient?.phone || patient?.contactNumber || patient?.mobile || profile?.phone || prescription.patientPhone || prescription.contactNumber || 'N/A';
+          const email = patient?.email || prescription.patientEmail || 'N/A';
+
           return {
             ...prescription,
-            patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
-            patientEmail: patient ? patient.email || 'N/A' : 'N/A',
-            patientMobile: patient ? (patient.mobile || patient.phone || patient.contactNumber || 'N/A') : 'N/A',
-            patientPhone: patient ? (patient.phone || patient.contactNumber || patient.mobile || 'N/A') : 'N/A',
-            contactNumber: patient ? (patient.contactNumber || patient.phone || patient.mobile || 'N/A') : 'N/A',
-            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
-            doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician'
+            patientName: resolvedName,
+            patientEmail: email,
+            patientMobile: phone,
+            patientPhone: phone,
+            contactNumber: phone,
+            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : (prescription.doctorName || 'Doctor'),
+            doctorSpecialization: doc ? doc.specialization || 'General Physician' : (prescription.doctorSpecialization || 'General Physician')
           };
         } catch (err) {
-          return { ...prescription, patientName: 'Unknown Patient', doctorName: 'Unknown Doctor' };
+          return { 
+            ...prescription, 
+            patientName: (prescription.patientName && prescription.patientName.toLowerCase() !== 'unknown patient') ? prescription.patientName : 'Patient', 
+            doctorName: prescription.doctorName || 'Doctor' 
+          };
         }
       }));
     } else if (role === 'admin') {
@@ -220,18 +286,44 @@ router.get('/', auth, async (req, res) => {
       prescriptions = await Promise.all(prescriptions.map(async (prescription) => {
         try {
           let patient = null;
+          let profile = null;
           let doc = null;
-          if (prescription.patientId) patient = await findUserById(prescription.patientId);
+          if (prescription.patientId) {
+            patient = await findUserById(prescription.patientId);
+            if (!patient) {
+              try { profile = await getFamilyProfileById(prescription.patientId); } catch (e) {}
+            }
+          }
+          if (!patient && prescription.accountId) {
+            patient = await findUserById(prescription.accountId);
+          }
           if (prescription.doctorId) doc = await findUserById(prescription.doctorId);
+
+          let resolvedName = '';
+          if (patient && (patient.firstName || patient.lastName)) {
+            resolvedName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim();
+          } else if (profile && (profile.firstName || profile.lastName)) {
+            resolvedName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+          }
+          if (!resolvedName || resolvedName.toLowerCase() === 'unknown patient') {
+            resolvedName = (prescription.patientName && prescription.patientName.toLowerCase() !== 'unknown patient')
+              ? prescription.patientName.trim()
+              : 'Patient';
+          }
+
           return {
             ...prescription,
-            patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || 'Unknown Patient' : 'Unknown Patient',
-            patientEmail: patient ? patient.email || 'N/A' : 'N/A',
-            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
-            doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician'
+            patientName: resolvedName,
+            patientEmail: patient?.email || prescription.patientEmail || 'N/A',
+            doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : (prescription.doctorName || 'Doctor'),
+            doctorSpecialization: doc ? doc.specialization || 'General Physician' : (prescription.doctorSpecialization || 'General Physician')
           };
         } catch (err) {
-          return { ...prescription, patientName: 'Unknown Patient', doctorName: 'Unknown Doctor' };
+          return { 
+            ...prescription, 
+            patientName: (prescription.patientName && prescription.patientName.toLowerCase() !== 'unknown patient') ? prescription.patientName : 'Patient', 
+            doctorName: prescription.doctorName || 'Doctor' 
+          };
         }
       }));
     }
@@ -248,12 +340,22 @@ router.get('/', auth, async (req, res) => {
 
 /**
  * @route   GET /api/prescriptions/lookup/:code
- * @desc    Lookup prescription by QR code string or partial ID
- * @access  Private (Pharmacist / Admin)
+ * @desc    Lookup prescription by QR code string, URL, or partial ID
+ * @access  Public / Authenticated
  */
-router.get('/lookup/:code', auth, async (req, res) => {
+router.get(['/lookup/:code', '/public/lookup/:code', '/verify/:code'], async (req, res) => {
   try {
-    const code = req.params.code;
+    let code = req.params.code || '';
+    if (typeof code === 'string') {
+      try { code = decodeURIComponent(code); } catch (e) {}
+      if (code.includes('id=')) {
+        const match = code.match(/[?&]id=([^&#]+)/);
+        if (match) code = match[1];
+      } else if (code.includes('/')) {
+        code = code.split('/').filter(Boolean).pop() || code;
+      }
+      code = code.split('?')[0].trim();
+    }
     console.log('[Prescriptions] Lookup by code/id:', code);
     
     let prescription = null;
@@ -274,7 +376,7 @@ router.get('/lookup/:code', auth, async (req, res) => {
           const jsonFields = ['vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
             'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
             'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
-            'warningSigns', 'followUpInfo', 'dispensedBy'];
+            'warningSigns', 'followUpInfo', 'dispensedBy', 'dispenseHistory'];
           for (const field of jsonFields) {
             if (typeof row[field] === 'string') {
               try { row[field] = JSON.parse(row[field]); } catch (e) {}
@@ -294,7 +396,7 @@ router.get('/lookup/:code', auth, async (req, res) => {
         const jsonFields = ['vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
           'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
           'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
-          'warningSigns', 'followUpInfo', 'dispensedBy'];
+          'warningSigns', 'followUpInfo', 'dispensedBy', 'dispenseHistory'];
         prescription = results.find(d => {
           const id = d.id || '';
           return id.endsWith(code) || id.includes(code);
@@ -323,20 +425,142 @@ router.get('/lookup/:code', auth, async (req, res) => {
       if (prescription.doctorId) doc = await findUserById(prescription.doctorId);
     } catch (e) { /* ignore enhancement errors */ }
 
+    // Extract list of medication names for privacy-safe preview
+    const medNames = Array.isArray(prescription.medications) && prescription.medications.length > 0
+      ? prescription.medications.map(m => typeof m === 'object' && m ? (m.name || m.medicationName || '') : String(m)).filter(Boolean)
+      : (prescription.medication ? [prescription.medication] : []);
+
     const enhanced = {
       ...prescription,
       id: prescription.id,
-      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : 'Unknown Patient',
-      patientEmail: patient ? patient.email || 'N/A' : 'N/A',
-      doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : 'Unknown Doctor',
-      doctorSpecialization: doc ? doc.specialization || 'General Physician' : 'General Physician',
-      doctorVerified: doc?.digilockerVerified || false
+      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Unknown Patient'),
+      patientEmail: patient ? patient.email || 'N/A' : (prescription.patientEmail || 'N/A'),
+      doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : (prescription.doctorName || 'Unknown Doctor'),
+      doctorSpecialization: doc ? doc.specialization || 'General Physician' : (prescription.doctorSpecialization || 'General Physician'),
+      doctorVerified: doc?.digilockerVerified || false,
+      medicationNames: medNames,
+      requiresBirthYearVerification: true
     };
 
     res.json({ success: true, prescription: enhanced });
   } catch (error) {
     console.error('Prescription lookup error:', error);
     res.status(500).json({ success: false, message: 'Server error during lookup' });
+  }
+});
+
+/**
+ * @route   POST /api/prescriptions/:id/verify-birth-year
+ * @desc    Verify patient birth year to unlock full clinical prescription and link patient to doctor
+ * @access  Private / Authenticated
+ */
+router.post(['/:id/verify-birth-year', '/verify-birth-year/:id'], auth, async (req, res) => {
+  try {
+    const { birthYear } = req.body;
+    const inputYear = parseInt(String(birthYear).trim(), 10);
+    if (!inputYear || isNaN(inputYear) || inputYear < 1900 || inputYear > new Date().getFullYear()) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid 4-digit birth year (e.g. 1995).' });
+    }
+
+    const prescription = await findPrescriptionById(req.params.id);
+    if (!prescription) {
+      return res.status(404).json({ success: false, message: 'Prescription not found.' });
+    }
+
+    // Resolve patient
+    let patient = null;
+    let familyProfile = null;
+    if (prescription.patientId) {
+      patient = await findUserById(prescription.patientId);
+      if (!patient) {
+        try { familyProfile = await getFamilyProfileById(prescription.patientId); } catch (e) {}
+      }
+    }
+    if (!patient && prescription.accountId) {
+      patient = await findUserById(prescription.accountId);
+    }
+
+    // Extract actual patient birth year
+    let actualYear = null;
+    const dobString = patient?.dateOfBirth || familyProfile?.dateOfBirth || prescription.patientDob || '';
+    if (dobString) {
+      const match = String(dobString).match(/\b(19\d\d|20\d\d)\b/);
+      if (match) {
+        actualYear = parseInt(match[1], 10);
+      } else {
+        const parsed = new Date(dobString);
+        if (!isNaN(parsed.getFullYear()) && parsed.getFullYear() > 1900) {
+          actualYear = parsed.getFullYear();
+        }
+      }
+    }
+
+    // Fallback: calculate from patientAge if DOB not present in profile
+    let matches = false;
+    if (actualYear) {
+      matches = (actualYear === inputYear);
+    } else if (prescription.patientAge) {
+      const age = parseInt(String(prescription.patientAge).replace(/[^\d]/g, ''), 10);
+      if (age > 0) {
+        const createdYear = prescription.createdAt ? new Date(prescription.createdAt).getFullYear() : new Date().getFullYear();
+        const estimatedYear = createdYear - age;
+        matches = Math.abs(estimatedYear - inputYear) <= 1;
+      }
+    }
+
+    if (!matches) {
+      return res.status(403).json({
+        success: false,
+        verified: false,
+        message: 'Birth year verification failed. The entered birth year does not match patient records.'
+      });
+    }
+
+    // Auto-link patient to doctor if requesting user is a doctor
+    let linked = false;
+    if (req.user && req.user.role === 'doctor' && prescription.patientId) {
+      try {
+        const doctorUser = await findUserById(req.user.id);
+        if (doctorUser) {
+          const linkedPatients = Array.isArray(doctorUser.linkedPatients) ? [...doctorUser.linkedPatients] : [];
+          if (!linkedPatients.includes(prescription.patientId)) {
+            linkedPatients.push(prescription.patientId);
+            await updateUser(req.user.id, { linkedPatients });
+            linked = true;
+            console.log(`[Prescriptions] Auto-linked patient ${prescription.patientId} to doctor ${req.user.id} after birth year verification`);
+          }
+        }
+      } catch (linkErr) {
+        console.error('Error auto-linking patient to doctor:', linkErr);
+      }
+    }
+
+    // Return full unlocked prescription
+    let doc = null;
+    if (prescription.doctorId) {
+      try { doc = await findUserById(prescription.doctorId); } catch (e) {}
+    }
+
+    const enhanced = {
+      ...prescription,
+      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Patient'),
+      patientEmail: patient ? patient.email || 'N/A' : (prescription.patientEmail || 'N/A'),
+      doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : (prescription.doctorName || 'Doctor'),
+      doctorSpecialization: doc ? doc.specialization || 'General Physician' : (prescription.doctorSpecialization || 'General Physician'),
+      doctorVerified: doc?.digilockerVerified || false,
+      isUnlocked: true
+    };
+
+    res.json({
+      success: true,
+      verified: true,
+      linked,
+      message: 'Birth year verified successfully! Prescription unlocked.',
+      prescription: enhanced
+    });
+  } catch (error) {
+    console.error('Verify birth year error:', error);
+    res.status(500).json({ success: false, message: 'Server error during birth year verification' });
   }
 });
 
@@ -723,10 +947,13 @@ router.get('/:id', auth, async (req, res) => {
     const userId = req.user.id;
     const role = req.user.role;
     
-    if (
-      (role === 'doctor' && prescription.doctorId !== userId) && 
-      (role === 'patient' && prescription.patientId !== userId)
-    ) {
+    if (role === 'doctor' && prescription.doctorId !== userId) {
+      const doctorUser = await findUserById(userId);
+      const isLinked = Array.isArray(doctorUser?.linkedPatients) && doctorUser.linkedPatients.includes(prescription.patientId);
+      if (!isLinked) {
+        return res.status(403).json({ message: 'Access denied. Patient birth year verification required.', requiresBirthYearVerification: true });
+      }
+    } else if (role === 'patient' && prescription.patientId !== userId) {
       return res.status(403).json({ message: 'Access denied' });
     }
     
@@ -738,15 +965,58 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/prescriptions/lookup/:code
+ * @desc    Lookup prescription by QR code, URL, or prescription ID
+ * @access  Public
+ */
+router.get('/lookup/:code', async (req, res) => {
+  try {
+    const rawCode = req.params.code || '';
+    const prescription = await findPrescriptionById(rawCode);
+
+    if (!prescription) {
+      return res.status(404).json({ success: false, message: 'Prescription not found' });
+    }
+
+    let patient = null;
+    let doctorUser = null;
+    if (prescription.patientId) {
+      patient = await findUserById(prescription.patientId);
+    }
+    if (prescription.doctorId) {
+      doctorUser = await findUserById(prescription.doctorId);
+    }
+
+    const enhanced = {
+      ...prescription,
+      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Patient'),
+      patientDOB: patient ? patient.dateOfBirth : prescription.patientDOB,
+      patientGender: patient ? patient.gender : prescription.patientGender,
+      doctorName: doctorUser ? `Dr. ${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() : (prescription.doctorName || 'Doctor'),
+      doctorSpecialization: doctorUser ? doctorUser.specialization : (prescription.doctorSpecialization || 'General Physician'),
+      doctorLicenseNumber: doctorUser ? doctorUser.licenseNumber : prescription.doctorLicenseNumber,
+      doctorClinicName: doctorUser ? doctorUser.clinicName : prescription.doctorClinicName,
+      doctorStamp: doctorUser ? doctorUser.stamp : prescription.doctorStamp,
+      doctorSignature: doctorUser ? doctorUser.signature : prescription.doctorSignature,
+    };
+
+    res.json({ success: true, prescription: enhanced });
+  } catch (error) {
+    console.error('Lookup prescription error:', error);
+    res.status(500).json({ success: false, message: 'Server error looking up prescription' });
+  }
+});
+
+/**
  * @route   GET /api/prescriptions/public/:id
  * @desc    Get prescription by ID (Public shared view - no authentication required)
  * @access  Public
  */
-router.get('/public/:id', async (req, res) => {
+router.get(['/public/:id', '/verify-rx/:id'], async (req, res) => {
   try {
-    const prescriptionId = req.params.id;
-    const prescription = await findPrescriptionById(prescriptionId);
-    
+    let prescriptionId = req.params.id || '';
+    let prescription = await findPrescriptionById(prescriptionId);
+
     if (!prescription) {
       return res.status(404).json({ message: 'Prescription not found' });
     }
@@ -863,9 +1133,10 @@ router.post('/', doctor, async (req, res) => {
     }
 
     // Resolve family profile if provided — use profile data for patient info on the prescription
-    let profilePatientName = `${patient.firstName} ${patient.lastName}`.trim();
+    let profilePatientName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim();
     let profileAge = '';
-    let profileGender = patient.gender || '';
+    let profileDOB = patient.dateOfBirth || patient.dob || req.body.patientDOB || '';
+    let profileGender = patient.gender || req.body.patientGender || '';
     let profileDisplayId = reqDisplayId || '';
     let resolvedAccountId = reqAccountId || patient.id;
     let resolvedPatientId = patient.id;
@@ -874,23 +1145,35 @@ router.post('/', doctor, async (req, res) => {
       try {
         const profile = await getFamilyProfileById(familyProfileId);
         if (profile && profile.accountId === patient.id) {
-          profilePatientName = `${profile.firstName} ${profile.lastName}`.trim();
-          profileGender = profile.gender || '';
+          profilePatientName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+          profileGender = profile.gender || profileGender;
           profileDisplayId = profile.patientDisplayId || '';
+          profileDOB = profile.dateOfBirth || profileDOB;
           resolvedAccountId = profile.accountId;
           // Use profile id as the patientId for unique identification
           resolvedPatientId = profile.id;
-          if (profile.dateOfBirth) {
-            const dob = new Date(profile.dateOfBirth);
-            const ageDiff = Date.now() - dob.getTime();
-            const ageDate = new Date(ageDiff);
-            profileAge = String(Math.abs(ageDate.getUTCFullYear() - 1970));
-          }
           console.log('Using family profile for prescription:', profile.patientDisplayId, profilePatientName);
         }
       } catch (profileErr) {
         console.error('Failed to resolve family profile, using account data:', profileErr.message);
       }
+    }
+
+    // Calculate age from DOB if available
+    if (profileDOB) {
+      const dobTime = new Date(profileDOB).getTime();
+      if (!isNaN(dobTime)) {
+        const years = Math.floor((Date.now() - dobTime) / (365.25 * 86400000));
+        if (years >= 0 && years < 150) {
+          profileAge = String(years);
+        }
+      }
+    }
+    if (!profileAge && req.body.patientAge) {
+      profileAge = String(req.body.patientAge);
+    }
+    if (!profileAge && patient.age) {
+      profileAge = String(patient.age);
     }
     
     // Create prescription with comprehensive data
@@ -900,6 +1183,7 @@ router.post('/', doctor, async (req, res) => {
       patientName: profilePatientName,
       patientEmail: patient.email,
       patientAge: profileAge,
+      patientDOB: profileDOB,
       patientGender: profileGender,
       accountId: resolvedAccountId,
       patientDisplayId: profileDisplayId,
@@ -1098,13 +1382,22 @@ router.get(['/public/:id/download', '/public/:id/pdf'], async (req, res) => {
     let patient = await findUserById(prescription.patientId);
     let doctorUser = await findUserById(prescription.doctorId);
     
-    if (!patient) {
+    if (patient) {
+      if (!patient.dateOfBirth && prescription.patientDOB) patient.dateOfBirth = prescription.patientDOB;
+      if (!patient.age && prescription.patientAge) patient.age = prescription.patientAge;
+      if (!patient.gender && prescription.patientGender) patient.gender = prescription.patientGender;
+      if (prescription.patientName && !patient.firstName) {
+        patient.firstName = prescription.patientName.split(' ')[0] || 'Patient';
+        patient.lastName = prescription.patientName.split(' ').slice(1).join(' ') || '';
+      }
+    } else {
       patient = {
         id: prescription.patientId || 'patient-id',
         firstName: prescription.patientName ? prescription.patientName.split(' ')[0] : 'Patient',
         lastName: prescription.patientName ? prescription.patientName.split(' ').slice(1).join(' ') : '',
         email: prescription.patientEmail || '',
         dateOfBirth: prescription.patientDOB || '',
+        age: prescription.patientAge || '',
         gender: prescription.patientGender || '',
         phone: prescription.patientPhone || prescription.contactNumber || ''
       };
@@ -1172,13 +1465,22 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
     let patient = await findUserById(prescription.patientId);
     let doctorUser = await findUserById(prescription.doctorId);
     
-    if (!patient) {
+    if (patient) {
+      if (!patient.dateOfBirth && prescription.patientDOB) patient.dateOfBirth = prescription.patientDOB;
+      if (!patient.age && prescription.patientAge) patient.age = prescription.patientAge;
+      if (!patient.gender && prescription.patientGender) patient.gender = prescription.patientGender;
+      if (prescription.patientName && !patient.firstName) {
+        patient.firstName = prescription.patientName.split(' ')[0] || 'Patient';
+        patient.lastName = prescription.patientName.split(' ').slice(1).join(' ') || '';
+      }
+    } else {
       patient = {
         id: prescPatientId || 'patient-id',
         firstName: prescription.patientName ? prescription.patientName.split(' ')[0] : 'Patient',
         lastName: prescription.patientName ? prescription.patientName.split(' ').slice(1).join(' ') : '',
         email: prescription.patientEmail || '',
         dateOfBirth: prescription.patientDOB || '',
+        age: prescription.patientAge || '',
         gender: prescription.patientGender || '',
         phone: prescription.patientPhone || prescription.contactNumber || '',
         address: prescription.patientAddress || '',
@@ -1229,7 +1531,7 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
 router.put('/:id/dispense', auth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { dispenseNotes } = req.body;
+    const { dispenseNotes, itemsDispensed, medStatuses } = req.body;
 
     console.log('[Prescriptions] Dispense request for ID/Code:', id, 'User:', req.user?.id);
 
@@ -1275,16 +1577,64 @@ router.put('/:id/dispense', auth, async (req, res) => {
       }
     } catch (e) {}
 
+    let history = [];
+    if (Array.isArray(prescription.dispenseHistory)) {
+      history = [...prescription.dispenseHistory];
+    } else if (typeof prescription.dispenseHistory === 'string') {
+      try {
+        history = JSON.parse(prescription.dispenseHistory);
+      } catch (e) {}
+    }
+
+    // Migrate any legacy single dispense record if history was empty
+    if (history.length === 0 && prescription.dispensedAt) {
+      history.push({
+        dispenseIndex: 1,
+        dispensedAt: prescription.dispensedAt,
+        dispenseNotes: prescription.dispenseNotes || 'Prescription items dispensed',
+        itemsDispensed: Array.isArray(prescription.medications) ? prescription.medications.map(m => ({ name: m.name, status: 'given' })) : [],
+        dispensedStatus: prescription.dispensedStatus || 'dispensed'
+      });
+    }
+
+    const now = new Date().toISOString();
+    const items = Array.isArray(itemsDispensed) 
+      ? itemsDispensed 
+      : (Array.isArray(medStatuses) 
+          ? medStatuses.map(ms => ({ 
+              name: ms.medicineName || ms.name, 
+              status: ms.status,
+              quantity: ms.quantity || (ms.dispensedQuantity !== undefined ? `${ms.dispensedQuantity} ${ms.unit || 'Tablets'}` : undefined),
+              dispensedQuantity: ms.dispensedQuantity !== undefined ? Number(ms.dispensedQuantity) : undefined,
+              prescribedQuantity: ms.prescribedQuantity !== undefined ? Number(ms.prescribedQuantity) : undefined,
+              unit: ms.unit || 'Tablets',
+              isFull: ms.isFull !== undefined ? ms.isFull : (ms.status === 'given')
+            })) 
+          : (prescription.medications ? prescription.medications.map(m => ({ name: m.name, status: 'given', quantity: m.quantity })) : []));
+
+    const newHistoryEvent = {
+      dispenseIndex: history.length + 1,
+      dispensedAt: now,
+      dispenseNotes: dispenseNotes || 'All prescribed items verified and dispensed.',
+      itemsDispensed: items,
+      dispensedStatus: 'dispensed'
+    };
+
+    history.unshift(newHistoryEvent); // newest first
+
     const dispenseData = {
       dispensedStatus: 'dispensed',
-      dispensedAt: new Date().toISOString(),
+      dispensedAt: now,
       dispensedBy: {
         pharmacistId: req.user?.id || 'staff-pharm',
         pharmacistName: pharmacist ? `${pharmacist.firstName || ''} ${pharmacist.lastName || ''}`.trim() : (req.user?.name || 'Staff Pharmacist'),
         pharmacyName: pharmacist?.pharmacyName || 'Medizo Care Pharmacy',
-        licenseNumber: pharmacist?.licenseNumber || 'PHARM-88219'
+        licenseNumber: pharmacist?.licenseNumber || 'PHARM-88219',
+        itemsDispensed: items
       },
-      dispenseNotes: dispenseNotes || 'All prescribed items verified and dispensed.'
+      dispenseNotes: dispenseNotes || 'All prescribed items verified and dispensed.',
+      dispenseHistory: history,
+      dispenseCount: history.length
     };
 
     const updatedPrescription = await updatePrescription(targetId, dispenseData);

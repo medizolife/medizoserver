@@ -498,4 +498,89 @@ router.post('/upload-stamp', doctor, async (req, res) => {
   }
 });
 
+const DEFAULT_CLINIC_SERVICES = [
+  { id: 'srv_1', name: 'Nebulization', price: 150, code: '999312', active: true },
+  { id: 'srv_2', name: 'Wound Dressing / Suture Removal', price: 200, code: '999312', active: true },
+  { id: 'srv_3', name: 'ECG Recording', price: 300, code: '999312', active: true },
+  { id: 'srv_4', name: 'Blood Sugar Rapid Test', price: 100, code: '999312', active: true },
+  { id: 'srv_5', name: 'Injection Administration', price: 50, code: '999312', active: true },
+  { id: 'srv_6', name: 'Ear Syringing', price: 250, code: '999312', active: true }
+];
+
+const formatRateCard = (d) => ({
+  consultationFee: (d?.consultationFee !== undefined && d?.consultationFee !== null && !isNaN(Number(d.consultationFee))) ? Number(d.consultationFee) : 500,
+  followUpFee: (d?.followUpFee !== undefined && d?.followUpFee !== null && !isNaN(Number(d.followUpFee))) ? Number(d.followUpFee) : 0,
+  followUpDays: (d?.followUpDays !== undefined && d?.followUpDays !== null && !isNaN(Number(d.followUpDays))) ? Number(d.followUpDays) : 7,
+  teleconsultFee: (d?.teleconsultFee !== undefined && d?.teleconsultFee !== null && !isNaN(Number(d.teleconsultFee))) ? Number(d.teleconsultFee) : 400,
+  clinicUpiVpa: d?.clinicUpiVpa || '',
+  clinicGstin: d?.clinicGstin || '',
+  defaultGstType: d?.defaultGstType || 'exempt',
+  clinicServices: Array.isArray(d?.clinicServices) && d.clinicServices.length > 0 ? d.clinicServices : DEFAULT_CLINIC_SERVICES
+});
+
+/**
+ * @route   GET /api/doctors/rate-card
+ * @desc    Get logged-in doctor's billing rate card and UPI/GSTIN settings
+ * @access  Private (Doctor only)
+ */
+router.get('/rate-card', doctor, async (req, res) => {
+  try {
+    const doc = await findUserById(req.user.id);
+    if (!doc) {
+      return res.status(404).json({ success: false, message: 'Doctor not found' });
+    }
+
+    res.json({
+      success: true,
+      rateCard: formatRateCard(doc)
+    });
+  } catch (error) {
+    console.error('Get doctor rate-card error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve rate card' });
+  }
+});
+
+/**
+ * @route   PUT /api/doctors/rate-card
+ * @desc    Update doctor's billing rate card and UPI/GSTIN settings
+ * @access  Private (Doctor only)
+ */
+router.put('/rate-card', doctor, async (req, res) => {
+  try {
+    const { consultationFee, followUpFee, followUpDays, teleconsultFee, clinicUpiVpa, clinicGstin, defaultGstType, clinicServices } = req.body;
+    const updateData = {};
+
+    if (consultationFee !== undefined) updateData.consultationFee = Number(consultationFee);
+    if (followUpFee !== undefined) updateData.followUpFee = Number(followUpFee);
+    if (followUpDays !== undefined) updateData.followUpDays = Number(followUpDays);
+    if (teleconsultFee !== undefined) updateData.teleconsultFee = Number(teleconsultFee);
+    if (clinicUpiVpa !== undefined) updateData.clinicUpiVpa = String(clinicUpiVpa).trim();
+    if (clinicGstin !== undefined) updateData.clinicGstin = String(clinicGstin).trim();
+    if (defaultGstType !== undefined) updateData.defaultGstType = defaultGstType;
+
+    if (clinicServices !== undefined && Array.isArray(clinicServices)) {
+      updateData.clinicServices = clinicServices
+        .map((s, idx) => ({
+          id: s.id || `srv_${Date.now()}_${idx}`,
+          name: String(s.name || '').trim(),
+          price: !isNaN(Number(s.price)) ? Math.max(0, Number(s.price)) : 0,
+          code: s.code ? String(s.code).trim() : '999312',
+          active: s.active !== false
+        }))
+        .filter(s => s.name.length > 0);
+    }
+
+    const updated = await updateUser(req.user.id, updateData);
+
+    res.json({
+      success: true,
+      message: 'Rate card & billing settings updated successfully',
+      rateCard: formatRateCard(updated)
+    });
+  } catch (error) {
+    console.error('Update doctor rate-card error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update rate card' });
+  }
+});
+
 module.exports = router;

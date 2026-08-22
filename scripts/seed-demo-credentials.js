@@ -24,19 +24,22 @@ async function seedData() {
     process.exit(1);
   }
 
-  const demoPassword = 'password123';
+  const demoPassword = 'Medizo@2026';
 
-  // 1. Admin
-  let admin = await findUserByEmail('admin@medizo.life');
-  if (!admin) {
-    admin = await createUser({
-      firstName: 'System',
-      lastName: 'Administrator',
-      email: 'admin@medizo.life',
-      password: 'admin123',
-      role: 'admin',
-      status: 'active'
-    });
+  // 1. Admin Accounts
+  const adminAccounts = [
+    { email: 'admin@medizo.life', firstName: 'System', lastName: 'Administrator', role: 'admin', password: demoPassword, status: 'active' },
+    { email: 'admin2@medizo.life', firstName: 'Operations', lastName: 'Admin', role: 'admin', password: demoPassword, status: 'active' },
+    { email: 'admin.test@medizo.life', firstName: 'Test', lastName: 'Admin', role: 'admin', password: demoPassword, status: 'active' }
+  ];
+
+  for (const acc of adminAccounts) {
+    let adm = await findUserByEmail(acc.email);
+    if (!adm) {
+      await createUser(acc);
+    } else {
+      await updateUser(adm.id, { password: demoPassword, status: 'active', role: 'admin' });
+    }
   }
 
   // 2. Doctor 1
@@ -243,14 +246,16 @@ async function seedData() {
   console.log('\n====================================================');
   console.log('🎉 DEMO CREDENTIALS SEEDED SUCCESSFULLY!');
   console.log('====================================================');
-  console.log('📋 Account Credentials Summary:');
-  console.log('  1. ADMIN:   email: admin@medizo.life  | pass: admin123');
-  console.log('  2. DOCTOR:  email: doctor@test.com    | pass: password123');
-  console.log('  3. DOCTOR2: email: doctor2@test.com   | pass: password123');
-  console.log('  4. NURSE:   email: nurse@test.com     | pass: password123');
-  console.log('  5. NURSE2:  email: nurse2@test.com    | pass: password123');
-  console.log('  6. PATIENT: email: patient@test.com   | pass: password123');
-  console.log('  7. PATIENT2:email: patient2@test.com  | pass: password123');
+  console.log('📋 Account Credentials Summary (All passwords: Medizo@2026):');
+  console.log('  1. ADMIN 1: email: admin@medizo.life      | pass: Medizo@2026');
+  console.log('  2. ADMIN 2: email: admin2@medizo.life     | pass: Medizo@2026');
+  console.log('  3. ADMIN 3: email: admin.test@medizo.life | pass: Medizo@2026');
+  console.log('  4. DOCTOR:  email: doctor@test.com        | pass: Medizo@2026');
+  console.log('  5. DOCTOR2: email: doctor2@test.com       | pass: Medizo@2026');
+  console.log('  6. NURSE:   email: nurse@test.com         | pass: Medizo@2026');
+  console.log('  7. NURSE2:  email: nurse2@test.com        | pass: Medizo@2026');
+  console.log('  8. PATIENT: email: patient@test.com       | pass: Medizo@2026');
+  console.log('  9. PATIENT2:email: patient2@test.com      | pass: Medizo@2026');
   console.log('====================================================');
 
   process.exit(0);

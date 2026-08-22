@@ -162,6 +162,8 @@ CREATE TABLE IF NOT EXISTS prescriptions (
   dispensedAt TEXT,
   dispensedBy TEXT DEFAULT '{"pharmacistId":"","pharmacistName":"","pharmacyName":"","licenseNumber":""}',
   dispenseNotes TEXT DEFAULT '',
+  dispenseHistory TEXT DEFAULT '[]',
+  dispenseCount INTEGER DEFAULT 0,
 
   -- Timestamps
   createdAt TEXT DEFAULT (datetime('now')),
@@ -295,9 +297,24 @@ CREATE TABLE IF NOT EXISTS bills (
   tax REAL NOT NULL DEFAULT 0.0,
   discount REAL NOT NULL DEFAULT 0.0,
   totalAmount REAL NOT NULL DEFAULT 0.0,
+  amountPaid REAL NOT NULL DEFAULT 0.0,
+  balanceDue REAL NOT NULL DEFAULT 0.0,
+  gstType TEXT DEFAULT 'exempt',               -- 'exempt', 'cgst_sgst', 'igst', 'none'
+  gstRate REAL DEFAULT 0.0,                    -- 0, 5, 12, 18
+  cgstAmount REAL DEFAULT 0.0,
+  sgstAmount REAL DEFAULT 0.0,
+  igstAmount REAL DEFAULT 0.0,
+  doctorGstin TEXT DEFAULT '',
+  patientGstin TEXT DEFAULT '',
+  hsnSacCode TEXT DEFAULT '999312',            -- SAC 999312 for Outpatient Healthcare
+  concessionReason TEXT DEFAULT '',            -- 'senior_citizen', 'follow_up', 'staff', 'bpl', 'courtesy', 'none'
+  sendToPatient INTEGER DEFAULT 1,             -- 1=send WhatsApp/SMS, 0=internal only
+  dispatchChannel TEXT DEFAULT 'whatsapp_sms', -- 'whatsapp', 'sms', 'email', 'whatsapp_sms', 'none'
+  upiVpa TEXT DEFAULT '',                      -- e.g. 'doctor@okhdfcbank'
+  upiQrData TEXT DEFAULT '',                   -- NPCI intent URI string
   currency TEXT DEFAULT 'INR',
-  status TEXT NOT NULL DEFAULT 'draft',        -- 'draft', 'issued', 'paid', 'cancelled', 'refunded'
-  paymentMethod TEXT DEFAULT '',               -- 'cash', 'upi', 'card', 'insurance', 'bank_transfer', 'online'
+  status TEXT NOT NULL DEFAULT 'draft',        -- 'draft', 'issued', 'partially_paid', 'paid', 'cancelled', 'refunded'
+  paymentMethod TEXT DEFAULT '',               -- 'cash', 'upi', 'card', 'insurance', 'bank_transfer', 'online', 'split'
   paymentTransactionRef TEXT DEFAULT '',
   paidAt TEXT DEFAULT NULL,
   paymentNotes TEXT DEFAULT '',
@@ -323,12 +340,48 @@ CREATE TABLE IF NOT EXISTS bill_items (
   quantity REAL NOT NULL DEFAULT 1,
   unitPrice REAL NOT NULL DEFAULT 0.0,
   totalPrice REAL NOT NULL DEFAULT 0.0,
+  hsnSacCode TEXT DEFAULT '999312',
+  gstRate REAL DEFAULT 0.0,
+  discountAmount REAL DEFAULT 0.0,
   notes TEXT DEFAULT '',
   createdAt TEXT DEFAULT (datetime('now')),
   updatedAt TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_bill_items_billId ON bill_items(billId);
+
+CREATE TABLE IF NOT EXISTS bill_payments (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  billId TEXT NOT NULL,
+  amountPaid REAL NOT NULL DEFAULT 0.0,
+  paymentMode TEXT NOT NULL DEFAULT 'cash',    -- 'cash', 'upi', 'card', 'insurance', 'bank_transfer', 'cheque', 'other'
+  upiTransactionRef TEXT DEFAULT '',
+  receiptNumber TEXT DEFAULT '',
+  collectedBy TEXT DEFAULT '',                 -- User ID of doctor/receptionist
+  notes TEXT DEFAULT '',
+  paidAt TEXT DEFAULT (datetime('now')),
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bill_payments_billId ON bill_payments(billId);
+CREATE INDEX IF NOT EXISTS idx_bill_payments_paidAt ON bill_payments(paidAt);
+
+CREATE TABLE IF NOT EXISTS clinic_services (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  doctorId TEXT NOT NULL,
+  serviceName TEXT NOT NULL,
+  itemType TEXT NOT NULL DEFAULT 'procedure',  -- 'consultation', 'procedure', 'investigation', 'nursing', 'other'
+  defaultPrice REAL NOT NULL DEFAULT 0.0,
+  hsnSacCode TEXT DEFAULT '999312',
+  isGstExempt INTEGER DEFAULT 1,
+  gstRate REAL DEFAULT 0.0,
+  isActive INTEGER DEFAULT 1,
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_clinic_services_doctorId ON clinic_services(doctorId);
 
 
 -- ============================================================
@@ -526,5 +579,38 @@ CREATE INDEX IF NOT EXISTS idx_ns_patientId ON nurse_schedules(patientId);
 CREATE INDEX IF NOT EXISTS idx_ns_startDatetime ON nurse_schedules(startDatetime);
 CREATE INDEX IF NOT EXISTS idx_ns_endDatetime ON nurse_schedules(endDatetime);
 CREATE INDEX IF NOT EXISTS idx_ns_status ON nurse_schedules(status);
+
+
+-- ============================================================
+-- PHARMACY INVENTORY & STOCK MANAGEMENT TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS pharmacy_inventory (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  pharmacistId TEXT NOT NULL,
+  pharmacyName TEXT DEFAULT '',
+  medicineName TEXT NOT NULL,
+  genericName TEXT DEFAULT '',
+  dosageForm TEXT DEFAULT 'Tablet',             -- 'Tablet', 'Capsule', 'Syrup', 'Injection', 'Ointment', 'Drops', 'Inhaler', 'Powder', 'Other'
+  strength TEXT DEFAULT '',                     -- e.g. '500mg', '100mg', '10ml'
+  manufacturer TEXT DEFAULT '',
+  batchNumber TEXT DEFAULT '',
+  expiryDate TEXT DEFAULT '',                   -- e.g. '2027-12-31'
+  quantity INTEGER DEFAULT 0,
+  unitPrice REAL DEFAULT 0.0,
+  mrp REAL DEFAULT 0.0,
+  reorderLevel INTEGER DEFAULT 10,
+  rackLocation TEXT DEFAULT '',                 -- e.g. 'Rack A-3', 'Shelf 2'
+  status TEXT DEFAULT 'in_stock',               -- 'in_stock', 'low_stock', 'out_of_stock', 'expired'
+  isCustom INTEGER DEFAULT 0,                   -- 0 = master catalog item, 1 = custom added by pharmacist
+  notes TEXT DEFAULT '',
+  createdAt TEXT DEFAULT (datetime('now')),
+  updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pi_pharmacistId ON pharmacy_inventory(pharmacistId);
+CREATE INDEX IF NOT EXISTS idx_pi_medicineName ON pharmacy_inventory(medicineName);
+CREATE INDEX IF NOT EXISTS idx_pi_status ON pharmacy_inventory(status);
+CREATE INDEX IF NOT EXISTS idx_pi_expiryDate ON pharmacy_inventory(expiryDate);
+
 
 

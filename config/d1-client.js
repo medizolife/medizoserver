@@ -15,12 +15,13 @@ function getD1Config() {
 }
 
 /**
- * Check if D1 credentials are configured
+ * Check if D1 credentials or native binding are configured
  * @returns {boolean}
  */
 function isD1Configured() {
+  if (globalThis.__D1_DB__ || globalThis.DB) return true;
   const { accountId, apiToken, dbId } = getD1Config();
-  return Boolean(accountId && apiToken && dbId);
+  return Boolean(accountId && dbId);
 }
 
 /**
@@ -30,8 +31,27 @@ function isD1Configured() {
  * @returns {Promise<{results: Array, meta: Object}>} Query results
  */
 async function queryD1(sql, params = []) {
+  // 1. Prefer native Cloudflare Worker D1 binding (0 HTTP subrequests, zero latency)
+  const nativeDb = globalThis.__D1_DB__ || globalThis.DB;
+  if (nativeDb && typeof nativeDb.prepare === 'function') {
+    try {
+      const stmt = (params && params.length > 0)
+        ? nativeDb.prepare(sql).bind(...params)
+        : nativeDb.prepare(sql);
+      const res = await stmt.all();
+      return {
+        results: res.results || [],
+        meta: res.meta || {}
+      };
+    } catch (nativeErr) {
+      console.error('Native D1 query error:', nativeErr.message, '| SQL:', sql.substring(0, 100));
+      throw nativeErr;
+    }
+  }
+
+  // 2. Fallback to Cloudflare D1 REST API (for external environments like Vercel or local Node)
   const { accountId, apiToken, dbId } = getD1Config();
-  if (!accountId || !apiToken || !dbId) {
+  if (!accountId || !dbId) {
     throw new Error('Cloudflare D1 credentials not configured.');
   }
 

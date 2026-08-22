@@ -5,7 +5,7 @@ const PRESCRIPTION_JSON_FIELDS = [
   'vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
   'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
   'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
-  'warningSigns', 'followUpInfo', 'dispensedBy', 'testReports'
+  'warningSigns', 'followUpInfo', 'dispensedBy', 'testReports', 'dispenseHistory'
 ];
 
 /**
@@ -86,16 +86,40 @@ const findPrescriptionsByDoctorId = async (doctorId) => {
 };
 
 /**
- * Find prescriptions by patient ID
+ * Find prescriptions by patient ID, family profile IDs, or email
  * @param {string} patientId
+ * @param {Object} [options]
  * @returns {Promise<Array>}
  */
-const findPrescriptionsByPatientId = async (patientId) => {
+const findPrescriptionsByPatientId = async (patientId, options = {}) => {
   try {
-    const { results } = await queryD1(
-      'SELECT * FROM prescriptions WHERE patientId = ? ORDER BY createdAt DESC',
-      [patientId]
-    );
+    const userEmail = (options.email || '').trim().toLowerCase();
+
+    // Fetch family profile IDs for this account if available
+    let profileIds = [];
+    try {
+      const { results: profiles } = await queryD1('SELECT id FROM family_profiles WHERE accountId = ?', [patientId]);
+      if (profiles && profiles.length > 0) {
+        profileIds = profiles.map(p => p.id).filter(Boolean);
+      }
+    } catch (e) {}
+
+    let whereClauses = ['patientId = ?'];
+    let queryParams = [patientId];
+
+    if (profileIds.length > 0) {
+      const placeholders = profileIds.map(() => '?').join(',');
+      whereClauses.push(`patientId IN (${placeholders})`);
+      queryParams.push(...profileIds);
+    }
+
+    if (userEmail) {
+      whereClauses.push(`(patientEmail IS NOT NULL AND patientEmail != '' AND lower(patientEmail) = ?)`);
+      queryParams.push(userEmail);
+    }
+
+    const sql = `SELECT DISTINCT * FROM prescriptions WHERE (${whereClauses.join(' OR ')}) ORDER BY createdAt DESC`;
+    const { results } = await queryD1(sql, queryParams);
     return results.map(parsePrescriptionRow);
   } catch (error) {
     console.error('D1 findPrescriptionsByPatientId error:', error);
@@ -110,12 +134,72 @@ const findPrescriptionsByPatientId = async (patientId) => {
  */
 const findPrescriptionById = async (id) => {
   if (!id) return null;
+  let cleanId = String(id).trim();
+
+  // Try extracting from URL query parameters if a URL or parameter string was provided
   try {
-    const { results } = await queryD1(
+    const paramMatch = cleanId.match(/[?&](?:rxId|id|code|rx|scan|verify)=([^&#]+)/i);
+    if (paramMatch && paramMatch[1]) {
+      cleanId = decodeURIComponent(paramMatch[1]).trim();
+    } else if (cleanId.includes('/')) {
+      const urlWithoutQuery = cleanId.split('?')[0].split('#')[0];
+      const segments = urlWithoutQuery.split('/').filter(Boolean);
+      const last = segments.pop() || '';
+      if (last && !['dashboard', 'verify-prescription', 'verify', 'view', 'prescriptions', 'public'].includes(last.toLowerCase())) {
+        cleanId = decodeURIComponent(last).trim();
+      }
+    }
+  } catch (e) {}
+
+  cleanId = cleanId.split('?')[0].split('#')[0].trim();
+  if (!cleanId) return null;
+
+  try {
+    // 1. Direct ID match
+    let { results } = await queryD1(
       'SELECT * FROM prescriptions WHERE id = ? LIMIT 1',
-      [id]
+      [cleanId]
     );
-    return results.length > 0 ? parsePrescriptionRow(results[0]) : null;
+    if (results && results.length > 0) {
+      return parsePrescriptionRow(results[0]);
+    }
+
+    // 2. Direct qrCode match
+    ({ results } = await queryD1(
+      'SELECT * FROM prescriptions WHERE qrCode = ? LIMIT 1',
+      [cleanId]
+    ));
+    if (results && results.length > 0) {
+      return parsePrescriptionRow(results[0]);
+    }
+
+    // 3. Formatted RX ID match (e.g. RX-2026-08-15-1068f)
+    if (cleanId.toUpperCase().startsWith('RX-')) {
+      const parts = cleanId.split('-');
+      const suffix = parts[parts.length - 1]; // e.g. 1068f
+      if (suffix && suffix.length >= 4) {
+        ({ results } = await queryD1(
+          'SELECT * FROM prescriptions WHERE id LIKE ? LIMIT 1',
+          [`%${suffix}`]
+        ));
+        if (results && results.length > 0) {
+          return parsePrescriptionRow(results[0]);
+        }
+      }
+    }
+
+    // 4. Suffix match (last 5-8 chars)
+    if (cleanId.length >= 5 && cleanId.length <= 12) {
+      ({ results } = await queryD1(
+        'SELECT * FROM prescriptions WHERE id LIKE ? LIMIT 1',
+        [`%${cleanId}`]
+      ));
+      if (results && results.length > 0) {
+        return parsePrescriptionRow(results[0]);
+      }
+    }
+
+    return null;
   } catch (error) {
     console.error('D1 findPrescriptionById error:', error);
     return null;
@@ -145,7 +229,8 @@ const createPrescription = async (prescriptionData) => {
       'testsRequired', 'investigations', 'investigationNotes', 'testReports',
       'dietModifications', 'lifestyleChanges', 'warningSigns',
       'followUpDate', 'followUpInfo', 'emergencyHelpline',
-      'qrCode', 'status', 'dispensedStatus', 'dispensedAt', 'dispensedBy', 'dispenseNotes'
+      'qrCode', 'status', 'dispensedStatus', 'dispensedAt', 'dispensedBy', 'dispenseNotes',
+      'dispenseHistory', 'dispenseCount'
     ];
 
     const fields = [];

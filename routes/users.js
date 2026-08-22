@@ -324,36 +324,68 @@ router.get('/patients/my-patients', doctor, async (req, res) => {
     
     // Get unique patient IDs from prescriptions with their latest prescription date
     const patientLastActivity = new Map();
+    const emailToPrescriptionsMap = new Map();
+
     for (const p of prescriptions) {
       // Use accountId if prescription was created for a family profile, or fallback to patientId
       let pid = p.accountId || p.patientId?.toString() || p.patientId;
       // If pid is a family profile ID, look up parent accountId
       if (pid) {
-        const familyProfile = await getFamilyProfileById(pid);
-        if (familyProfile && familyProfile.accountId) {
-          pid = familyProfile.accountId;
-        }
+        try {
+          const familyProfile = await getFamilyProfileById(pid);
+          if (familyProfile && familyProfile.accountId) {
+            pid = familyProfile.accountId;
+          }
+        } catch (e) {}
       }
       const pDate = new Date(p.updatedAt || p.createdAt || 0);
       if (pid && (!patientLastActivity.has(pid) || pDate > patientLastActivity.get(pid))) {
         patientLastActivity.set(pid, pDate);
       }
+
+      if (p.patientEmail) {
+        const cleanEmail = p.patientEmail.trim().toLowerCase();
+        if (cleanEmail && cleanEmail !== 'n/a') {
+          if (!emailToPrescriptionsMap.has(cleanEmail)) emailToPrescriptionsMap.set(cleanEmail, []);
+          emailToPrescriptionsMap.get(cleanEmail).push(p);
+        }
+      }
     }
     
     // Get doctor's linked patients
     const doctorData = await findUserById(doctorId);
-    const linkedPatientIds = doctorData?.linkedPatients || [];
+    const linkedPatientIds = new Set(doctorData?.linkedPatients || []);
+    for (const pid of patientLastActivity.keys()) {
+      linkedPatientIds.add(pid);
+    }
+
+    // Also check all users for assigned doctor or email match
+    const allUsers = await getUsers();
+    for (const u of allUsers) {
+      if (u.role === 'patient') {
+        if (u.primaryDoctor === doctorId || u.assignedDoctor === doctorId || u.doctorId === doctorId) {
+          linkedPatientIds.add(u.id);
+        }
+        if (u.email && emailToPrescriptionsMap.has(u.email.trim().toLowerCase())) {
+          linkedPatientIds.add(u.id);
+        }
+      }
+    }
     
-    // Combine and deduplicate patient IDs
-    const allPatientIds = [...new Set([...patientLastActivity.keys(), ...linkedPatientIds])];
-    
+    const usersById = new Map(allUsers.map(u => [u.id, u]));
+
     // Get patient details for each unique patient ID
     const patients = [];
-    for (const patientId of allPatientIds) {
-      const patient = await findUserById(patientId);
+    for (const patientId of linkedPatientIds) {
+      const patient = usersById.get(patientId) || await findUserById(patientId);
       if (patient && patient.role === 'patient') {
         const { password, ...patientData } = patient;
-        const familyProfiles = await getFamilyProfilesByAccountId(patientId);
+        let familyProfiles = [];
+        try {
+          familyProfiles = await getFamilyProfilesByAccountId(patientId);
+        } catch (e) {
+          familyProfiles = [];
+        }
         // Use latest prescription date, or updatedAt, or createdAt as lastActivity
         const lastPrescriptionDate = patientLastActivity.get(patientId);
         const lastActivity = lastPrescriptionDate || new Date(patient.updatedAt || patient.createdAt || 0);
@@ -618,14 +650,16 @@ router.put('/profile', auth, async (req, res) => {
       firstName,
       lastName,
       contactNumber,
-      ...(req.user.role === 'doctor' && { 
+      // Location coordinates & address (available to all users for nearby discovery & clinic tracking)
+      clinicLatitude,
+      clinicLongitude,
+      clinicLocationAccuracy,
+      clinicPlaceName,
+      clinicAddress,
+      // Professional fields (doctor, nurse, pharmacist)
+      ...((['doctor', 'nurse', 'pharmacist', 'admin'].includes(req.user.role)) && { 
         specialization, 
         licenseNumber,
-        clinicAddress,
-        clinicLatitude,
-        clinicLongitude,
-        clinicLocationAccuracy,
-        clinicPlaceName,
         experience,
         qualifications,
         profileImage,

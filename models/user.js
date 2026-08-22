@@ -5,7 +5,8 @@ const { queryD1, isD1Connected: checkD1 } = require('../config/d1-client');
 // JSON fields that need parsing on read and stringifying on write
 const USER_JSON_FIELDS = [
   'allergies', 'diseaseHistory', 'chronicConditions',
-  'emergencyContact', 'linkedPatients', 'digilockerProfile'
+  'emergencyContact', 'linkedPatients', 'digilockerProfile',
+  'clinicServices'
 ];
 
 /**
@@ -89,10 +90,11 @@ const getUsers = async () => {
  */
 const findUserByEmail = async (email) => {
   if (!email) return null;
+  const cleanEmail = String(email).trim().toLowerCase();
   try {
     const { results } = await queryD1(
-      'SELECT * FROM users WHERE email = ? LIMIT 1',
-      [String(email).toLowerCase()]
+      'SELECT * FROM users WHERE LOWER(TRIM(email)) = ? LIMIT 1',
+      [cleanEmail]
     );
     return results.length > 0 ? parseUserRow(results[0]) : null;
   } catch (error) {
@@ -186,7 +188,7 @@ const createUser = async (userData) => {
 
     // Generate fallback email if email omitted (due to D1 NOT NULL schema constraint)
     const userEmail = (userData.email && userData.email.trim()) 
-      ? userData.email.toLowerCase() 
+      ? userData.email.trim().toLowerCase() 
       : `patient_${(mobile || Date.now()).toString().replace(/[\s\-\(\)\+]/g, '')}@patient.medizo.life`;
 
     // Hash password if provided
@@ -258,7 +260,9 @@ const ALLOWED_USER_COLUMNS = new Set([
   'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
   'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
   'medicalHistory', 'emergencyContact', 'guardianId', 'digilockerVerified', 'digilockerProfile',
-  'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires', 'updatedAt'
+  'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires', 'updatedAt',
+  'consultationFee', 'followUpFee', 'followUpDays', 'teleconsultFee',
+  'clinicUpiVpa', 'clinicGstin', 'defaultGstType', 'clinicServices'
 ]);
 
 /**
@@ -348,17 +352,18 @@ const deleteUser = async (id) => {
  * @returns {Promise<{user: Object, token: string}>}
  */
 const authenticateUser = async (email, password) => {
-  const user = await findUserByEmail(email);
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+  const user = await findUserByEmail(cleanEmail);
 
   if (!user) {
     throw new Error('Invalid credentials');
   }
 
   if (!user.password) {
-    throw new Error('Invalid credentials');
+    throw new Error('Invalid credentials. This account may have been registered via Google Sign-In.');
   }
 
-  const isPasswordValid = await bcrypt.compare(password, user.password);
+  const isPasswordValid = await bcrypt.compare(String(password), user.password);
   if (!isPasswordValid) {
     throw new Error('Invalid credentials');
   }
@@ -387,10 +392,17 @@ async function findOrCreateGoogleUser(googleUserInfo, role = null) {
   const { googleId, email, firstName, lastName, picture } = googleUserInfo;
 
   try {
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanGoogleId = String(googleId || '').trim();
+
+    if (!cleanEmail) {
+      throw new Error('Google account email is missing');
+    }
+
     // Check by googleId first, then email
     let { results } = await queryD1(
-      'SELECT * FROM users WHERE googleId = ? OR email = ? LIMIT 1',
-      [googleId, email.toLowerCase()]
+      'SELECT * FROM users WHERE (googleId = ? AND googleId != "") OR email = ? LIMIT 1',
+      [cleanGoogleId, cleanEmail]
     );
 
     let user = results.length > 0 ? parseUserRow(results[0]) : null;
@@ -404,30 +416,41 @@ async function findOrCreateGoogleUser(googleUserInfo, role = null) {
           token: null,
           isNewUser: true,
           requiresRoleSelection: true,
-          googleUserInfo: { googleId, email: email.toLowerCase(), firstName, lastName, picture }
+          googleUserInfo: { googleId: cleanGoogleId, email: cleanEmail, firstName, lastName, picture }
         };
       }
 
-      // Create new user with selected role (doctor or patient)
-      user = await createUser({
-        googleId,
-        email: email.toLowerCase(),
-        firstName,
-        lastName,
-        picture,
-        role: ['doctor', 'pharmacist'].includes(role) ? role : 'patient',
+      // Create new user with selected role (doctor, pharmacist, patient, nurse)
+      const created = await createUser({
+        googleId: cleanGoogleId,
+        email: cleanEmail,
+        firstName: firstName || 'User',
+        lastName: lastName || '',
+        picture: picture || '',
+        role: ['doctor', 'pharmacist', 'nurse'].includes(role) ? role : 'patient',
         authProvider: 'google'
       });
+
+      user = (created && created.id) ? created : await findUserByEmail(cleanEmail);
       isNewUser = true;
-      console.log(`Created new Google user with role [${user.role}]:`, email);
-    } else if (!user.googleId) {
-      // Link existing email account to Google
-      user = await updateUser(user.id, {
-        googleId,
-        picture: picture || user.picture,
-        authProvider: 'google'
-      });
-      console.log('Linked existing account to Google:', email);
+      console.log(`Created new Google user with role [${user?.role}]:`, cleanEmail);
+    } else {
+      // Link existing email account to Google if not already linked
+      if (!user.googleId || user.googleId !== cleanGoogleId) {
+        const updated = await updateUser(user.id, {
+          googleId: cleanGoogleId,
+          picture: picture || user.picture,
+          authProvider: 'google'
+        });
+        if (updated && updated.id) {
+          user = updated;
+        }
+        console.log('Linked existing account to Google:', cleanEmail);
+      }
+    }
+
+    if (!user || !user.id) {
+      throw new Error('Failed to create or resolve Google user account');
     }
 
     // Generate JWT token

@@ -24,6 +24,7 @@ const referralRoutes = require('../routes/referrals');
 const homeCareRoutes = require('../routes/homeCare');
 const nurseAssignmentRoutes = require('../routes/nurseAssignments');
 const nurseScheduleRoutes = require('../routes/nurseSchedules');
+const inventoryRoutes = require('../routes/inventory');
 
 // Import user model for demo users
 const { createDemoUsers } = require('../models/user');
@@ -36,7 +37,10 @@ const initializeApp = async () => {
   if (isInitialized) return;
   try {
     await connectDB();
-    await createDemoUsers();
+    // Only seed demo users in development/staging (set SEED_DEMO_USERS=true in env)
+    if (process.env.SEED_DEMO_USERS === 'true') {
+      await createDemoUsers();
+    }
     isInitialized = true;
   } catch (err) {
     console.error('Initialization error:', err);
@@ -71,6 +75,7 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -170,6 +175,7 @@ app.use('/api/referrals', referralRoutes);
 app.use('/api/home-care', homeCareRoutes);
 app.use('/api/nurse-assignments', nurseAssignmentRoutes);
 app.use('/api/nurse-schedules', nurseScheduleRoutes);
+app.use('/api/inventory', inventoryRoutes);
 
 // Routes without /api prefix (for Vercel rewrites)
 app.use('/auth', authRoutes);
@@ -186,6 +192,7 @@ app.use('/referrals', referralRoutes);
 app.use('/home-care', homeCareRoutes);
 app.use('/nurse-assignments', nurseAssignmentRoutes);
 app.use('/nurse-schedules', nurseScheduleRoutes);
+app.use('/inventory', inventoryRoutes);
 
 // Root & Health check
 app.get('/api/health', async (req, res) => {

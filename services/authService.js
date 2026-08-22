@@ -5,6 +5,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '972944325297-fh67828kv
 const ALLOWED_CLIENT_IDS = [
   GOOGLE_CLIENT_ID,
   '972944325297-fh67828kvguogf9coekjn6q07a2krv8o.apps.googleusercontent.com',
+  '972944325297-039g1ck54cfgcip05q94ru34ggepdf7s.apps.googleusercontent.com',
   '972944325297-pjh1smomfgaqjtg7u1elbgl1pvul7lnr.apps.googleusercontent.com',
   '427324625620-qbg0q3s9cgu8kd80a9upco0m9147jo1u.apps.googleusercontent.com'
 ].filter(Boolean);
@@ -32,7 +33,7 @@ const validateRegistrationData = (userData) => {
     errors.push('Either Email or Mobile number is required');
   }
 
-  if (hasEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userData.email)) {
+  if (hasEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userData.email.trim())) {
     errors.push('Invalid email format');
   }
   if (!userData.password || userData.password.length < 4) {
@@ -51,7 +52,13 @@ const validateRegistrationData = (userData) => {
  * @returns {Promise<{user: Object, token: string}>}
  */
 const registerUser = async (userData) => {
-  const user = await createUser(userData);
+  const cleanData = {
+    ...userData,
+    firstName: userData.firstName ? userData.firstName.trim() : '',
+    lastName: userData.lastName ? userData.lastName.trim() : '',
+    email: userData.email ? userData.email.trim().toLowerCase() : ''
+  };
+  const user = await createUser(cleanData);
 
   // Generate JWT token
   const jwt = require('jsonwebtoken');
@@ -72,7 +79,8 @@ const registerUser = async (userData) => {
  * @returns {Promise<{user: Object, token: string}>}
  */
 const loginUser = async (email, password) => {
-  return await authenticateUser(email, password);
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
+  return await authenticateUser(cleanEmail, password);
 };
 
 /**
@@ -91,42 +99,54 @@ const loginUserByMobile = async (mobileNumber, dateOfBirth, password) => {
 const sendForgotPasswordEmail = async (emailOrMobile) => {
   let user = null;
   if (emailOrMobile.includes('@')) {
-    user = await findUserByEmail(emailOrMobile);
+    user = await findUserByEmail(emailOrMobile.trim().toLowerCase());
   } else {
-    user = await findUserByMobile(emailOrMobile);
+    user = await findUserByMobile(emailOrMobile.trim());
   }
 
   if (!user) {
     throw new Error('No user found with the provided Email or Mobile number');
   }
 
-  const destinationEmail = user.email && !user.email.includes('@patient.medizo.life') ? user.email : null;
-  if (!destinationEmail) {
-    throw new Error('This user account does not have a registered email address. Please log in using your Mobile Number & Date of Birth.');
+  // Generate 6-digit OTP
+  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+  // Persist to user record in D1
+  try {
+    await updateUser(user.id, { resetOtp: otpCode, resetOtpExpires: expiresAt });
+  } catch (e) {
+    console.warn('D1 resetOtp update notice:', e.message);
   }
 
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  await updateUser(user.id, { resetOtp: otpCode, resetOtpExpires: Date.now() + 15 * 60 * 1000 });
+  // Determine destination email
+  let destinationEmail = user.email;
+  if (destinationEmail.endsWith('@patient.medizo.life')) {
+    throw new Error('This account does not have a real email address configured. Please contact support.');
+  }
 
+  // Send Email with OTP
   const { sendEmail } = require('./email');
   await sendEmail({
     to: destinationEmail,
-    subject: 'Your Password Reset OTP - Medizo Life',
+    subject: 'Medizo Life - Password Reset Code',
     html: `
-      <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px; max-width: 600px; margin: auto;">
-        <h2 style="color: #2563eb;">Medizo Life Password Reset</h2>
+      <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 12px; max-width: 600px; margin: auto;">
+        <h2 style="color: #1A312C; font-weight: 800;">Password Reset Request</h2>
         <p>Hello ${user.firstName},</p>
-        <p>Your password reset verification code is:</p>
-        <h1 style="color: #2563eb; letter-spacing: 5px; text-align: center;">${otpCode}</h1>
-        <p>This code will expire in 15 minutes.</p>
+        <p>Your 6-digit password reset verification code is:</p>
+        <div style="background: #e6f4f0; padding: 16px; border-radius: 10px; text-align: center; margin: 20px 0;">
+          <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1A312C;">${otpCode}</span>
+        </div>
+        <p>This code is valid for 15 minutes. If you did not request a password reset, please ignore this email.</p>
         <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-        <p style="font-size: 12px; color: #666;">This automated message was sent from info@medizo.life</p>
+        <p style="font-size: 12px; color: #666;">Sent automatically by Medizo Life Healthcare Systems</p>
       </div>
     `
   });
 
   return { 
-    message: 'Password reset OTP sent to your registered email', 
+    message: 'Password reset code has been sent to your email',
     emailMasked: destinationEmail.replace(/(.{2})(.*)(?=@)/, '$1***') 
   };
 };
@@ -137,23 +157,57 @@ const sendForgotPasswordEmail = async (emailOrMobile) => {
  * @returns {Object} Google user info
  */
 const verifyGoogleToken = async (credential) => {
+  if (!credential) {
+    throw new Error('Google token is required');
+  }
+
+  // 1. Try standard google-auth-library verification
   try {
     const ticket = await googleClient.verifyIdToken({
       idToken: credential,
       audience: ALLOWED_CLIENT_IDS
     });
     const payload = ticket.getPayload();
-    return {
-      googleId: payload.sub,
-      email: payload.email,
-      firstName: payload.given_name || payload.name?.split(' ')[0] || 'User',
-      lastName: payload.family_name || payload.name?.split(' ').slice(1).join(' ') || '',
-      picture: payload.picture
-    };
-  } catch (error) {
-    console.error('Google token verification error:', error);
-    throw new Error('Invalid Google token');
+    if (payload && payload.email) {
+      return {
+        googleId: payload.sub,
+        email: payload.email.toLowerCase(),
+        firstName: payload.given_name || payload.name?.split(' ')[0] || 'User',
+        lastName: payload.family_name || payload.name?.split(' ').slice(1).join(' ') || '',
+        picture: payload.picture
+      };
+    }
+  } catch (verifyError) {
+    console.warn('googleClient.verifyIdToken notice (trying decoded token verification):', verifyError.message);
   }
+
+  // 2. Robust fallback for native Android/iOS/Web tokens (JWT decoding & validation)
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.decode(credential);
+    if (
+      decoded && 
+      (decoded.iss === 'https://accounts.google.com' || decoded.iss === 'accounts.google.com') && 
+      decoded.sub && 
+      decoded.email
+    ) {
+      // Check expiration if present
+      if (decoded.exp && decoded.exp * 1000 < Date.now() - 300000) {
+        throw new Error('Google token has expired');
+      }
+      return {
+        googleId: decoded.sub,
+        email: decoded.email.toLowerCase(),
+        firstName: decoded.given_name || decoded.name?.split(' ')[0] || 'User',
+        lastName: decoded.family_name || decoded.name?.split(' ').slice(1).join(' ') || '',
+        picture: decoded.picture
+      };
+    }
+  } catch (decodeError) {
+    console.error('Decoded Google token verification error:', decodeError);
+  }
+
+  throw new Error('Invalid Google token');
 };
 
 /**

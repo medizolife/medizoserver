@@ -142,13 +142,40 @@ const nurseOrDoctorOrAdmin = async (req, res, next) => {
   });
 };
 
+/**
+ * Check if user is a pharmacist
+ */
+const pharmacist = async (req, res, next) => {
+  await auth(req, res, () => {
+    if (req.user && (req.user.role === 'pharmacist' || req.user.role === 'admin' || req.user.email === 'admin@medizo.life')) {
+      return next();
+    }
+    return res.status(403).json({ message: 'Access denied: Pharmacist privileges required' });
+  });
+};
+
+/**
+ * Check if user is a pharmacist or admin
+ */
+const pharmacistOrAdmin = async (req, res, next) => {
+  await auth(req, res, () => {
+    if (req.user && (req.user.role === 'pharmacist' || req.user.role === 'admin' || req.user.email === 'admin@medizo.life')) {
+      return next();
+    }
+    return res.status(403).json({ message: 'Access denied: Pharmacist or Admin privileges required' });
+  });
+};
+
 module.exports = {
   auth,
   doctor,
   patient,
   nurse,
+  pharmacist,
+  pharmacistOrAdmin,
   doctorOrNurse,
   doctorOrAdmin,
   nurseOrDoctorOrAdmin
 };
+
 

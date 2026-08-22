@@ -25,7 +25,7 @@ const PORT = process.env.PORT || 5000;
 let d1Connected = false;
 let isInitialized = false;
 
-// Connect to D1 and create demo users
+// Connect to D1
 const initializeApp = async () => {
   if (isInitialized) return;
   
@@ -38,7 +38,10 @@ const initializeApp = async () => {
       console.log('Cloudflare D1 connection failed. Check credentials in .env');
     }
     
-    await createDemoUsers();
+    // Only seed demo users in development/staging (set SEED_DEMO_USERS=true in env)
+    if (process.env.SEED_DEMO_USERS === 'true') {
+      await createDemoUsers();
+    }
     isInitialized = true;
   } catch (err) {
     console.error('Initialization error:', err);
@@ -82,6 +85,7 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -154,6 +158,7 @@ app.use('/api/referrals', require('./routes/referrals'));
 app.use('/api/home-care', require('./routes/homeCare'));
 app.use('/api/nurse-assignments', require('./routes/nurseAssignments'));
 app.use('/api/nurse-schedules', require('./routes/nurseSchedules'));
+app.use('/api/inventory', require('./routes/inventory'));
 
 // Basic route for testing
 app.get('/', (req, res) => {

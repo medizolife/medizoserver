@@ -3,6 +3,7 @@ const router = express.Router();
 const { findUserById, updateUser, getUsers } = require('../models/user');
 const { patient, auth, doctor } = require('../middleware/auth');
 const { findPrescriptionsByDoctorId, findPrescriptionsByPatientId } = require('../models/prescription');
+const { getFamilyProfileById, getFamilyProfilesByAccountId } = require('../models/familyProfile');
 
 /**
  * @route   GET /api/patients
@@ -120,62 +121,123 @@ router.get('/doctor/managed', auth, async (req, res) => {
       return res.status(403).json({ message: 'Access denied. Doctor role required.' });
     }
 
-    // Get all prescriptions by this doctor
+    const doctorData = await findUserById(doctorId);
     const doctorPrescriptions = await findPrescriptionsByDoctorId(doctorId);
     console.log('Total prescriptions by doctor:', doctorPrescriptions.length);
-    
-    // Get unique patient IDs from prescriptions
-    const patientIds = [...new Set(doctorPrescriptions.map(p => p.patientId))];
-    console.log('Unique patients:', patientIds.length);
-    
-    // Get all users
-    const users = await getUsers();
-    
-    // Filter patients managed by this doctor
-    const managedPatients = users
-      .filter(user => user.role === 'patient' && patientIds.includes(user.id))
-      .map(patient => {
-        // Get prescriptions for this patient by this doctor
-        const patientPrescriptions = doctorPrescriptions
-          .filter(p => p.patientId === patient.id)
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        
-        // Calculate prescription statistics
-        const activePrescriptions = patientPrescriptions.filter(p => p.status === 'active').length;
-        const completedPrescriptions = patientPrescriptions.filter(p => p.status === 'completed').length;
-        
-        // Get prescriptions without QR codes for response
-        const prescriptionsData = patientPrescriptions.map(({ qrCode, ...prescriptionData }) => prescriptionData);
-        
-        // Remove password from patient data
-        const { password, ...patientData } = patient;
-        
-        // Get all unique medications prescribed
-        const allMedications = patientPrescriptions.flatMap(p => p.medications || []);
-        
-        // Get all unique diagnoses
-        const diagnoses = [...new Set(patientPrescriptions.map(p => p.diagnosis).filter(Boolean))];
-        
-        return {
-          ...patientData,
-          prescriptionHistory: prescriptionsData,
-          totalPrescriptions: patientPrescriptions.length,
-          activePrescriptions,
-          completedPrescriptions,
-          latestPrescription: patientPrescriptions[0] || null,
-          allMedications,
-          diagnoses,
-          lastVisit: patientPrescriptions[0]?.createdAt || null
-        };
-      })
-      .sort((a, b) => {
-        // Sort by most recent prescription
-        const dateA = a.lastVisit ? new Date(a.lastVisit) : new Date(0);
-        const dateB = b.lastVisit ? new Date(b.lastVisit) : new Date(0);
-        return dateB - dateA;
+
+    // 1. Collect all linked patient IDs from doctor's linkedPatients
+    const linkedPatientIds = new Set(doctorData?.linkedPatients || []);
+
+    // 2. Collect patient IDs / account IDs / emails from doctor's prescriptions
+    const emailToPrescriptionsMap = new Map();
+    for (const p of doctorPrescriptions) {
+      let resolvedAccId = p.accountId || null;
+      let directPid = p.patientId?.toString() || p.patientId;
+
+      // If directPid is a family profile, look up parent accountId
+      if (directPid && !resolvedAccId) {
+        try {
+          const fp = await getFamilyProfileById(directPid);
+          if (fp && fp.accountId) {
+            resolvedAccId = fp.accountId;
+          }
+        } catch (e) {}
+      }
+
+      const targetId = resolvedAccId || directPid;
+      if (targetId) {
+        linkedPatientIds.add(targetId);
+      }
+
+      if (p.patientEmail) {
+        const cleanEmail = p.patientEmail.trim().toLowerCase();
+        if (cleanEmail && cleanEmail !== 'n/a') {
+          if (!emailToPrescriptionsMap.has(cleanEmail)) emailToPrescriptionsMap.set(cleanEmail, []);
+          emailToPrescriptionsMap.get(cleanEmail).push(p);
+        }
+      }
+    }
+
+    // 3. Find users and check primaryDoctor/assignedDoctor or email matches
+    const allUsers = await getUsers();
+    const usersById = new Map(allUsers.map(u => [u.id, u]));
+
+    for (const u of allUsers) {
+      if (u.role === 'patient') {
+        if (u.primaryDoctor === doctorId || u.assignedDoctor === doctorId || u.doctorId === doctorId) {
+          linkedPatientIds.add(u.id);
+        }
+        if (u.email && emailToPrescriptionsMap.has(u.email.trim().toLowerCase())) {
+          linkedPatientIds.add(u.id);
+        }
+      }
+    }
+
+    console.log('Total unique linked patient IDs for doctor:', linkedPatientIds.size);
+
+    const managedPatients = [];
+    for (const pid of linkedPatientIds) {
+      const user = usersById.get(pid);
+      if (!user || user.role !== 'patient') continue;
+
+      // Get family profiles for this patient
+      let familyProfiles = [];
+      try {
+        familyProfiles = await getFamilyProfilesByAccountId(user.id);
+      } catch (e) {
+        familyProfiles = [];
+      }
+      const profileIds = new Set(familyProfiles.map(f => f.id));
+
+      // Get prescriptions for this patient by this doctor
+      const patientPrescriptions = doctorPrescriptions
+        .filter(p => {
+          if (p.patientId === user.id) return true;
+          if (p.accountId === user.id) return true;
+          if (p.patientId && profileIds.has(p.patientId)) return true;
+          if (p.patientEmail && user.email && p.patientEmail.trim().toLowerCase() === user.email.trim().toLowerCase()) return true;
+          return false;
+        })
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+      const activePrescriptions = patientPrescriptions.filter(p => p.status === 'active').length;
+      const completedPrescriptions = patientPrescriptions.filter(p => p.status === 'completed').length;
+      const prescriptionsData = patientPrescriptions.map(({ qrCode, ...prescriptionData }) => prescriptionData);
+      const { password, ...patientData } = user;
+
+      // Get all unique medications prescribed
+      const allMedications = patientPrescriptions.flatMap(p => p.medications || []);
+
+      // Get all unique diagnoses
+      const diagnoses = [...new Set(patientPrescriptions.map(p => p.diagnosis).filter(Boolean))];
+
+      const lastVisit = patientPrescriptions[0]?.createdAt || null;
+      const lastActivity = lastVisit || user.updatedAt || user.createdAt || null;
+
+      managedPatients.push({
+        ...patientData,
+        prescriptionHistory: prescriptionsData,
+        totalPrescriptions: patientPrescriptions.length,
+        activePrescriptions,
+        completedPrescriptions,
+        latestPrescription: patientPrescriptions[0] || null,
+        allMedications,
+        diagnoses,
+        lastVisit,
+        lastActivity,
+        familyProfiles
       });
-    
+    }
+
+    // Sort by most recent activity / last visit (newest first)
+    managedPatients.sort((a, b) => {
+      const dateA = a.lastActivity ? new Date(a.lastActivity).getTime() : 0;
+      const dateB = b.lastActivity ? new Date(b.lastActivity).getTime() : 0;
+      return dateB - dateA;
+    });
+
     console.log('Managed patients with stats:', managedPatients.length);
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json(managedPatients);
   } catch (error) {
     console.error('Get managed patients error:', error);
@@ -190,28 +252,53 @@ router.get('/doctor/managed', auth, async (req, res) => {
  */
 router.get('/:id/medical-details', auth, async (req, res) => {
   try {
-    const patientId = req.params.id;
+    const targetParamId = req.params.id;
     const doctorId = req.user.id;
     const userRole = req.user.role;
 
-    console.log('Getting medical details for patient:', patientId, 'by doctor:', doctorId);
+    console.log('Getting medical details for patient:', targetParamId, 'by doctor:', doctorId);
 
     if (userRole !== 'doctor') {
       return res.status(403).json({ message: 'Access denied. Doctor role required.' });
     }
 
-    // Find the patient
-    const patient = await findUserById(patientId);
-    
+    // Find the patient (could be direct user ID or family profile ID)
+    let patient = await findUserById(targetParamId);
+    let targetProfile = null;
+
+    if (!patient) {
+      try {
+        targetProfile = await getFamilyProfileById(targetParamId);
+        if (targetProfile && targetProfile.accountId) {
+          patient = await findUserById(targetProfile.accountId);
+        }
+      } catch (e) {}
+    }
+
     if (!patient || patient.role !== 'patient') {
       return res.status(404).json({ message: 'Patient not found' });
     }
 
+    // Get family profiles
+    let familyProfiles = [];
+    try {
+      familyProfiles = await getFamilyProfilesByAccountId(patient.id);
+    } catch (e) {
+      familyProfiles = [];
+    }
+    const profileIds = new Set(familyProfiles.map(f => f.id));
+
     // Get all prescriptions for this patient by this doctor
     const doctorPrescriptions = await findPrescriptionsByDoctorId(doctorId);
     const patientPrescriptions = doctorPrescriptions
-      .filter(p => p.patientId === patientId)
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      .filter(p => {
+        if (p.patientId === patient.id) return true;
+        if (p.accountId === patient.id) return true;
+        if (p.patientId && profileIds.has(p.patientId)) return true;
+        if (p.patientEmail && patient.email && p.patientEmail.trim().toLowerCase() === patient.email.trim().toLowerCase()) return true;
+        return false;
+      })
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
     console.log('Found', patientPrescriptions.length, 'prescriptions for patient');
 
@@ -226,11 +313,10 @@ router.get('/:id/medical-details', auth, async (req, res) => {
     const medicationMap = new Map();
     patientPrescriptions.forEach(p => {
       (p.medications || []).forEach(med => {
-        const key = med.name.toLowerCase();
-        if (medicationMap.has(key)) {
-          medicationMap.set(key, medicationMap.get(key) + 1);
-        } else {
-          medicationMap.set(key, 1);
+        const medName = typeof med === 'string' ? med : (med.name || med.medication || '');
+        if (medName) {
+          const key = medName.toLowerCase();
+          medicationMap.set(key, (medicationMap.get(key) || 0) + 1);
         }
       });
     });
@@ -238,6 +324,8 @@ router.get('/:id/medical-details', auth, async (req, res) => {
     // Enhanced medical details
     const medicalDetails = {
       ...patientData,
+      familyProfiles,
+      targetProfile: targetProfile || null,
       prescriptionHistory: patientPrescriptions.map(({ qrCode, ...prescriptionData }) => ({
         ...prescriptionData,
         canView: true,
@@ -267,6 +355,7 @@ router.get('/:id/medical-details', auth, async (req, res) => {
       totalMedications: Array.from(medicationMap.keys()).length
     };
     
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.json(medicalDetails);
   } catch (error) {
     console.error('Get patient medical details error:', error);

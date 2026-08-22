@@ -199,10 +199,18 @@ router.post('/update-email', require('../middleware/auth').auth, async (req, res
     }
     
     const updatedUser = await updateUserEmail(req.user.id, email.trim());
+    const jwt = require('jsonwebtoken');
+    const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
+    const token = jwt.sign(
+      { id: updatedUser.id, role: updatedUser.role },
+      jwtSecret,
+      { expiresIn: '30d' }
+    );
     
     res.json({ 
       message: 'Email address updated successfully',
-      user: updatedUser
+      user: updatedUser,
+      token
     });
   } catch (error) {
     console.error('Update email error:', error);
@@ -224,10 +232,18 @@ router.post('/update-phone', require('../middleware/auth').auth, async (req, res
     }
     
     const updatedUser = await updateUserPhone(req.user.id, phone.trim());
+    const jwt = require('jsonwebtoken');
+    const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
+    const token = jwt.sign(
+      { id: updatedUser.id, role: updatedUser.role },
+      jwtSecret,
+      { expiresIn: '30d' }
+    );
     
     res.json({ 
       message: 'Mobile number updated successfully',
-      user: updatedUser
+      user: updatedUser,
+      token
     });
   } catch (error) {
     console.error('Update phone error:', error);
