@@ -11,6 +11,7 @@ const {
   ensureSelfProfile,
   MAX_PROFILES_PER_ACCOUNT
 } = require('../models/familyProfile');
+const { syncPatientProfileUpdates } = require('../services/patientResolver');
 
 /**
  * @route   GET /api/family-profiles
@@ -194,6 +195,14 @@ router.put('/:profileId', auth, async (req, res) => {
     }
 
     const updated = await updateFamilyProfile(req.params.profileId, updateData);
+
+    // Synchronize to users table (if self profile) and all linked prescriptions
+    try {
+      await syncPatientProfileUpdates(req.params.profileId, updateData);
+    } catch (syncErr) {
+      console.warn('syncPatientProfileUpdates warning in familyProfiles PUT:', syncErr);
+    }
+
     res.json({ profile: updated });
   } catch (error) {
     console.error('Update family profile error:', error);

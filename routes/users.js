@@ -8,6 +8,7 @@ const { findPrescriptionsByDoctorId } = require('../models/prescription');
 const { auth, doctor, patient } = require('../middleware/auth');
 const { getFamilyProfilesByAccountId, getFamilyProfileById, getProfileByDisplayId } = require('../models/familyProfile');
 const { canAccessPatientData } = require('../services/authzService');
+const { resolvePatient, syncPatientProfileUpdates } = require('../services/patientResolver');
 
 // Configure multer for profile picture uploads
 const storage = multer.memoryStorage(); // Use memory storage for serverless compatibility
@@ -692,6 +693,14 @@ router.put('/profile', auth, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    if (req.user.role === 'patient') {
+      try {
+        await syncPatientProfileUpdates(req.user.id, updateData);
+      } catch (syncErr) {
+        console.warn('syncPatientProfileUpdates warning in PUT /profile:', syncErr);
+      }
+    }
+
     res.json({
       message: 'Profile updated successfully',
       user: updatedUser
@@ -753,8 +762,8 @@ router.get('/patients/:id', doctor, async (req, res) => {
       return res.status(403).json({ message: 'Access denied: You are not authorized to access this patient record' });
     }
 
-    const patient = await findUserById(patientId);
-    if (!patient || patient.role !== 'patient') {
+    const patient = await resolvePatient(patientId);
+    if (!patient) {
       return res.status(404).json({ message: 'Patient not found' });
     }
 
@@ -779,18 +788,21 @@ router.put('/patients/:id', doctor, async (req, res) => {
       return res.status(403).json({ message: 'Access denied: You are not authorized to update this patient record' });
     }
 
-    const patient = await findUserById(patientId);
-    if (!patient || patient.role !== 'patient') {
+    const existingPatient = await resolvePatient(patientId);
+    if (!existingPatient) {
       return res.status(404).json({ message: 'Patient not found' });
     }
 
-    const updateData = req.body;
+    const updateData = { ...req.body };
     // Don't allow role changes through this endpoint
     delete updateData.role;
     delete updateData.id;
 
-    const updatedPatient = await updateUser(patientId, updateData);
-    const { password, ...patientData } = updatedPatient;
+    // Synchronize across users, family_profiles, and prescriptions
+    const { user, familyProfile } = await syncPatientProfileUpdates(patientId, updateData);
+    const updatedPatient = await resolvePatient(patientId);
+
+    const { password, ...patientData } = (updatedPatient || user || familyProfile || existingPatient);
     
     res.json({
       message: 'Patient updated successfully',

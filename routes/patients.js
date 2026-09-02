@@ -4,6 +4,7 @@ const { findUserById, updateUser, getUsers } = require('../models/user');
 const { patient, auth, doctor } = require('../middleware/auth');
 const { findPrescriptionsByDoctorId, findPrescriptionsByPatientId } = require('../models/prescription');
 const { getFamilyProfileById, getFamilyProfilesByAccountId } = require('../models/familyProfile');
+const { syncPatientProfileUpdates } = require('../services/patientResolver');
 
 /**
  * @route   GET /api/patients
@@ -83,19 +84,27 @@ router.get('/profile', patient, async (req, res) => {
 router.put('/profile', patient, async (req, res) => {
   try {
     const patientId = req.user.id;
-    const { firstName, lastName, dateOfBirth, contactNumber, address } = req.body;
+    const { firstName, lastName, dateOfBirth, contactNumber, phone, address, gender } = req.body;
     
     // Update user
     const updatedPatient = await updateUser(patientId, {
       firstName,
       lastName,
       dateOfBirth,
-      contactNumber,
-      address
+      contactNumber: contactNumber || phone,
+      phone: phone || contactNumber,
+      address,
+      ...(gender !== undefined && { gender: String(gender).trim().toLowerCase() })
     });
     
     if (!updatedPatient) {
       return res.status(404).json({ message: 'Patient not found' });
+    }
+
+    try {
+      await syncPatientProfileUpdates(patientId, req.body);
+    } catch (syncErr) {
+      console.warn('syncPatientProfileUpdates warning in patients.js PUT /profile:', syncErr);
     }
     
     res.json(updatedPatient);

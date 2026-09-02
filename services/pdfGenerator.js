@@ -569,19 +569,19 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         y += 12.5;
 
         if (vs.pulse) {
-          const cleanPulse = String(vs.pulse).replace(/\s*bpm/gi, '').trim();
+          const cleanPulse = String(vs.pulse).replace(/(?:\s*bpm)+/gi, '').trim();
           bv('Pulse:', `${cleanPulse} bpm`, vx[0], y);
         }
         if (vs.temperature) {
-          const cleanTemp = String(vs.temperature).replace(/\s*°?\s*[FC]/gi, '').trim();
+          const cleanTemp = String(vs.temperature).replace(/(?:\s*°?\s*[FC])+/gi, '').trim();
           bv('Temp:', `${cleanTemp} °F`, vx[1], y);
         }
         if (vs.spo2) {
-          const cleanSpo2 = String(vs.spo2).replace(/\s*%/g, '').trim();
+          const cleanSpo2 = String(vs.spo2).replace(/(?:\s*%)+/g, '').trim();
           bv('SpO2:', `${cleanSpo2} %`, vx[2], y);
         }
         if (vs.respiratoryRate) {
-          const cleanResp = String(vs.respiratoryRate).replace(/\s*(\/min|bpm|cpm)/gi, '').trim();
+          const cleanResp = String(vs.respiratoryRate).replace(/(?:\s*(?:\/min|bpm|cpm))+/gi, '').trim();
           bv('Resp. Rate:', `${cleanResp} /min`, vx[3], y);
         }
         y += 12.5;

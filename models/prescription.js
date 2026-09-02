@@ -420,6 +420,65 @@ const deleteExternalPrescription = async (id) => {
   }
 };
 
+/**
+ * Sync patient profile details (gender, name, DOB, age, phone) into existing prescriptions
+ * Ensures that patientGender in prescriptions stays aligned with live profile updates
+ * @param {string[]} patientIds - Array of patient IDs or account IDs
+ * @param {Object} updateData - Updated patient data (gender, firstName, lastName, dateOfBirth, phone, etc.)
+ * @returns {Promise<boolean>}
+ */
+const syncPrescriptionsPatientData = async (patientIds = [], updateData = {}) => {
+  if (!patientIds || !patientIds.length) return false;
+  const validIds = [...new Set(patientIds.filter(Boolean).map(String))];
+  if (!validIds.length) return false;
+
+  const clauses = [];
+  const params = [];
+
+  if (updateData.gender !== undefined) {
+    clauses.push('patientGender = ?');
+    params.push(String(updateData.gender).trim().toLowerCase());
+  }
+
+  if (updateData.firstName !== undefined || updateData.lastName !== undefined) {
+    const fullName = `${updateData.firstName || ''} ${updateData.lastName || ''}`.trim();
+    if (fullName) {
+      clauses.push('patientName = ?');
+      params.push(fullName);
+    }
+  }
+
+  if (updateData.dateOfBirth !== undefined && updateData.dateOfBirth !== null) {
+    const dobTime = new Date(updateData.dateOfBirth).getTime();
+    if (!isNaN(dobTime)) {
+      const years = Math.floor((Date.now() - dobTime) / (365.25 * 86400000));
+      if (years >= 0 && years < 150) {
+        clauses.push('patientAge = ?');
+        params.push(String(years));
+      }
+    }
+  } else if (updateData.age !== undefined && updateData.age !== null) {
+    clauses.push('patientAge = ?');
+    params.push(String(updateData.age).replace(/[^0-9]/g, ''));
+  }
+
+  if (clauses.length === 0) return true;
+  clauses.push("updatedAt = datetime('now')");
+
+  const placeholders = validIds.map(() => '?').join(', ');
+  const whereSql = `WHERE patientId IN (${placeholders}) OR accountId IN (${placeholders})`;
+  const allParams = [...params, ...validIds, ...validIds];
+
+  try {
+    await queryD1(`UPDATE prescriptions SET ${clauses.join(', ')} ${whereSql}`, allParams);
+    console.log(`[syncPrescriptionsPatientData] Successfully updated prescriptions for IDs [${validIds.join(', ')}]`);
+    return true;
+  } catch (error) {
+    console.error('D1 syncPrescriptionsPatientData error:', error);
+    return false;
+  }
+};
+
 module.exports = {
   getPrescriptions,
   getPrescriptionsSync,
@@ -434,5 +493,6 @@ module.exports = {
   findExternalPrescriptionsByPatientId,
   findExternalPrescriptionById,
   deleteExternalPrescription,
+  syncPrescriptionsPatientData,
   isMongoConnected
 };

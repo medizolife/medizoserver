@@ -23,6 +23,7 @@ const { auth, doctor } = require('../middleware/auth');
 const { publicLookupLimiter } = require('../middleware/rateLimiter');
 const { sendPrescriptionNotification } = require('../services/email');
 const { getFamilyProfileById } = require('../models/familyProfile');
+const { resolvePatient } = require('../services/patientResolver');
 
 /**
  * Mask Patient Name for unauthenticated public preview
@@ -973,11 +974,30 @@ router.get('/:id', auth, async (req, res) => {
       if (!isLinked) {
         return res.status(403).json({ message: 'Access denied. Patient birth year verification required.', requiresBirthYearVerification: true });
       }
-    } else if (role === 'patient' && prescription.patientId !== userId) {
-      return res.status(403).json({ message: 'Access denied' });
+    } else if (role === 'patient') {
+      const prescPatientId = prescription.patientId?.toString();
+      const currentUserId = userId?.toString();
+      if (prescPatientId && currentUserId && prescPatientId !== currentUserId) {
+        const resolvedPatient = await resolvePatient(prescription.patientId);
+        if (!resolvedPatient || (resolvedPatient.accountId !== currentUserId && resolvedPatient.email?.toLowerCase() !== req.user.email?.toLowerCase())) {
+          return res.status(403).json({ message: 'Access denied' });
+        }
+      }
     }
+
+    let patient = null;
+    if (prescription.patientId) {
+      patient = await resolvePatient(prescription.patientId);
+    }
+
+    const enhanced = {
+      ...prescription,
+      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || prescription.patientName : prescription.patientName,
+      patientDOB: patient?.dateOfBirth || prescription.patientDOB,
+      patientGender: patient?.gender || prescription.patientGender,
+    };
     
-    res.json(prescription);
+    res.json(enhanced);
   } catch (error) {
     console.error('Get prescription error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -1001,7 +1021,7 @@ router.get('/lookup/:code', async (req, res) => {
     let patient = null;
     let doctorUser = null;
     if (prescription.patientId) {
-      patient = await findUserById(prescription.patientId);
+      patient = await resolvePatient(prescription.patientId);
     }
     if (prescription.doctorId) {
       doctorUser = await findUserById(prescription.doctorId);
@@ -1044,7 +1064,7 @@ router.get(['/public/:id', '/verify-rx/:id'], publicLookupLimiter, async (req, r
     let patient = null;
     let doctorUser = null;
     if (prescription.patientId) {
-      patient = await findUserById(prescription.patientId);
+      patient = await resolvePatient(prescription.patientId);
     }
     if (prescription.doctorId) {
       doctorUser = await findUserById(prescription.doctorId);
@@ -1425,13 +1445,17 @@ router.get(['/public/:id/download', '/public/:id/pdf'], async (req, res) => {
       return res.status(404).json({ message: 'Prescription not found' });
     }
     
-    let patient = await findUserById(prescription.patientId);
+    let patient = await resolvePatient(prescription.patientId);
     let doctorUser = await findUserById(prescription.doctorId);
     
     if (patient) {
       if (!patient.dateOfBirth && prescription.patientDOB) patient.dateOfBirth = prescription.patientDOB;
       if (!patient.age && prescription.patientAge) patient.age = prescription.patientAge;
-      if (!patient.gender && prescription.patientGender) patient.gender = prescription.patientGender;
+      if (patient.gender) {
+        prescription.patientGender = patient.gender;
+      } else if (prescription.patientGender) {
+        patient.gender = prescription.patientGender;
+      }
       if (prescription.patientName && !patient.firstName) {
         patient.firstName = prescription.patientName.split(' ')[0] || 'Patient';
         patient.lastName = prescription.patientName.split(' ').slice(1).join(' ') || '';
@@ -1508,13 +1532,17 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
     }
     
     // Get patient and doctor details (with robust fallbacks if user lookup fails)
-    let patient = await findUserById(prescription.patientId);
+    let patient = await resolvePatient(prescription.patientId);
     let doctorUser = await findUserById(prescription.doctorId);
     
     if (patient) {
       if (!patient.dateOfBirth && prescription.patientDOB) patient.dateOfBirth = prescription.patientDOB;
       if (!patient.age && prescription.patientAge) patient.age = prescription.patientAge;
-      if (!patient.gender && prescription.patientGender) patient.gender = prescription.patientGender;
+      if (patient.gender) {
+        prescription.patientGender = patient.gender;
+      } else if (prescription.patientGender) {
+        patient.gender = prescription.patientGender;
+      }
       if (prescription.patientName && !patient.firstName) {
         patient.firstName = prescription.patientName.split(' ')[0] || 'Patient';
         patient.lastName = prescription.patientName.split(' ').slice(1).join(' ') || '';
