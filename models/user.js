@@ -114,20 +114,10 @@ const findUserByMobile = async (mobileNumber) => {
   if (!cleanMobile) return null;
   try {
     const { results } = await queryD1(
-      'SELECT * FROM users WHERE phone = ? OR contactNumber = ? OR secondaryPhone = ? LIMIT 1',
-      [cleanMobile, cleanMobile, cleanMobile]
+      'SELECT * FROM users WHERE phone = ? OR contactNumber = ? OR secondaryPhone = ? OR phone LIKE ? OR contactNumber LIKE ? LIMIT 1',
+      [cleanMobile, cleanMobile, cleanMobile, `%${cleanMobile}%`, `%${cleanMobile}%`]
     );
-    if (results.length > 0) return parseUserRow(results[0]);
-
-    // Fallback: search all users for matching cleaned phone
-    const { results: allUsers } = await queryD1('SELECT * FROM users');
-    const matched = allUsers.find(u => {
-      const p1 = (u.phone || '').replace(/[\s\-\(\)\+]/g, '');
-      const p2 = (u.contactNumber || '').replace(/[\s\-\(\)\+]/g, '');
-      const p3 = (u.secondaryPhone || '').replace(/[\s\-\(\)\+]/g, '');
-      return p1 === cleanMobile || p2 === cleanMobile || p3 === cleanMobile;
-    });
-    return matched ? parseUserRow(matched) : null;
+    return results.length > 0 ? parseUserRow(results[0]) : null;
   } catch (error) {
     console.error('D1 findUserByMobile error:', error);
     return null;
@@ -144,20 +134,13 @@ const findUserById = async (id) => {
   const cleanId = String(id).trim();
   try {
     const { results } = await queryD1(
-      'SELECT * FROM users WHERE id = ? OR email = ? LIMIT 1',
+      'SELECT * FROM users WHERE id = ? OR LOWER(email) = ? LIMIT 1',
       [cleanId, cleanId.toLowerCase()]
     );
     if (results && results.length > 0) {
       return sanitizeUser(parseUserRow(results[0]));
     }
-    // Fallback: search across all users
-    const allUsers = await getUsers();
-    const found = allUsers.find(u => 
-      String(u.id) === cleanId || 
-      String(u._id) === cleanId || 
-      (u.email && u.email.toLowerCase() === cleanId.toLowerCase())
-    );
-    return found || null;
+    return null;
   } catch (error) {
     console.error('D1 findUserById error:', error);
     return null;
@@ -219,7 +202,8 @@ const createUser = async (userData) => {
       'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
       'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
       'medicalHistory', 'emergencyContact', 'guardianId', 'digilockerVerified', 'digilockerProfile',
-      'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires'
+      'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires',
+      'lastLoginIp', 'ipAddress'
     ];
 
     const fields = [];
@@ -260,7 +244,8 @@ const ALLOWED_USER_COLUMNS = new Set([
   'linkedPatients', 'dateOfBirth', 'gender', 'phone', 'contactNumber',
   'address', 'bloodType', 'allergies', 'diseaseHistory', 'chronicConditions',
   'medicalHistory', 'emergencyContact', 'guardianId', 'digilockerVerified', 'digilockerProfile',
-  'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires', 'updatedAt',
+  'loginOtp', 'loginOtpExpires', 'resetOtp', 'resetOtpExpires', 'updatedAt', 'lastLogin', 'createdAt',
+  'lastLoginIp', 'ipAddress',
   'consultationFee', 'followUpFee', 'followUpDays', 'teleconsultFee',
   'clinicUpiVpa', 'clinicGstin', 'defaultGstType', 'clinicServices'
 ]);
@@ -349,9 +334,10 @@ const deleteUser = async (id) => {
  * Authenticate a user
  * @param {string} email
  * @param {string} password
+ * @param {string|null} clientIp
  * @returns {Promise<{user: Object, token: string}>}
  */
-const authenticateUser = async (email, password) => {
+const authenticateUser = async (email, password, clientIp = null) => {
   const cleanEmail = email ? String(email).trim().toLowerCase() : '';
   const user = await findUserByEmail(cleanEmail);
 
@@ -366,6 +352,25 @@ const authenticateUser = async (email, password) => {
   const isPasswordValid = await bcrypt.compare(String(password), user.password);
   if (!isPasswordValid) {
     throw new Error('Invalid credentials');
+  }
+
+  // Update lastLogin timestamp & client IP
+  const nowIso = new Date().toISOString();
+  try {
+    const updatePayload = { lastLogin: nowIso, updatedAt: nowIso };
+    if (clientIp) {
+      updatePayload.lastLoginIp = String(clientIp);
+      updatePayload.ipAddress = String(clientIp);
+    }
+    await updateUser(user.id, updatePayload);
+    user.lastLogin = nowIso;
+    if (clientIp) {
+      user.lastLoginIp = String(clientIp);
+      user.ipAddress = String(clientIp);
+    }
+    user.updatedAt = nowIso;
+  } catch (e) {
+    // Non-blocking
   }
 
   // Generate JWT token
@@ -386,9 +391,10 @@ const authenticateUser = async (email, password) => {
  * Find or create a user via Google OAuth
  * @param {Object} googleUserInfo - User info from Google
  * @param {string} role - User role (for new users)
+ * @param {string|null} clientIp - Client IP Address
  * @returns {Promise<{user: Object, token: string, isNewUser: boolean}>}
  */
-async function findOrCreateGoogleUser(googleUserInfo, role = null) {
+async function findOrCreateGoogleUser(googleUserInfo, role = null, clientIp = null) {
   const { googleId, email, firstName, lastName, picture } = googleUserInfo;
 
   try {
@@ -428,7 +434,9 @@ async function findOrCreateGoogleUser(googleUserInfo, role = null) {
         lastName: lastName || '',
         picture: picture || '',
         role: ['doctor', 'pharmacist', 'nurse'].includes(role) ? role : 'patient',
-        authProvider: 'google'
+        authProvider: 'google',
+        lastLoginIp: clientIp || null,
+        ipAddress: clientIp || null
       });
 
       user = (created && created.id) ? created : await findUserByEmail(cleanEmail);
@@ -449,8 +457,23 @@ async function findOrCreateGoogleUser(googleUserInfo, role = null) {
       }
     }
 
-    if (!user || !user.id) {
-      throw new Error('Failed to create or resolve Google user account');
+    // Update lastLogin timestamp & client IP
+    const nowIso = new Date().toISOString();
+    try {
+      const updatePayload = { lastLogin: nowIso, updatedAt: nowIso };
+      if (clientIp) {
+        updatePayload.lastLoginIp = String(clientIp);
+        updatePayload.ipAddress = String(clientIp);
+      }
+      await updateUser(user.id, updatePayload);
+      user.lastLogin = nowIso;
+      if (clientIp) {
+        user.lastLoginIp = String(clientIp);
+        user.ipAddress = String(clientIp);
+      }
+      user.updatedAt = nowIso;
+    } catch (e) {
+      // Non-blocking
     }
 
     // Generate JWT token
@@ -582,6 +605,16 @@ const authenticateUserByMobile = async (mobileNumber, dateOfBirth, password) => 
   const isPasswordValid = await bcrypt.compare(password, user.password);
   if (!isPasswordValid) {
     throw new Error('Invalid credentials');
+  }
+
+  // Update lastLogin timestamp in background
+  const nowIso = new Date().toISOString();
+  try {
+    await updateUser(user.id, { lastLogin: nowIso, updatedAt: nowIso });
+    user.lastLogin = nowIso;
+    user.updatedAt = nowIso;
+  } catch (e) {
+    // Non-blocking
   }
 
   // Generate JWT token

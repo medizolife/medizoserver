@@ -5,8 +5,8 @@ const nodemailer = require('nodemailer');
  * @returns {Object} Nodemailer transport
  */
 const createTransport = () => {
-  const emailUser = process.env.EMAIL_USER || 'info@medizo.life';
-  const emailPass = process.env.EMAIL_PASS || 'Medizo@2026';
+  const emailUser = process.env.EMAIL_USER;
+  const emailPass = process.env.EMAIL_PASS;
   
   if (!emailUser || !emailPass || 
       emailUser === 'your-email@gmail.com' || 

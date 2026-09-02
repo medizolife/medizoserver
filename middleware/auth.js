@@ -8,7 +8,8 @@ const { findUserById } = require('../models/user');
  * @param {Function} next - Express next middleware function
  */
 const auth = async (req, res, next) => {
-  const token = req.header('x-auth-token') || req.header('Authorization')?.replace('Bearer ', '') || req.query.token;
+  // Disallow query parameter tokens on standard API routes to prevent log & referrer leakage
+  const token = req.header('x-auth-token') || req.header('Authorization')?.replace('Bearer ', '');
   
   // Check if no token
   if (!token) {
@@ -16,32 +17,15 @@ const auth = async (req, res, next) => {
   }
   
   try {
-    // Verify token - support active secret and fallback secrets
-    const primarySecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
-    const fallbackSecrets = [
-      primarySecret,
-      'medizo_jwt_secret_key_2026_health',
-      'healthcare_management_secret_key_2025',
-      'medizo_jwt_secret_key_2025'
-    ];
-
-    let decoded = null;
-    let verifyError = null;
-
-    for (const secret of fallbackSecrets) {
-      try {
-        decoded = jwt.verify(token, secret);
-        if (decoded) break;
-      } catch (err) {
-        verifyError = err;
-      }
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      console.error('FATAL: JWT_SECRET environment variable is not set');
+      return res.status(500).json({ message: 'Server configuration error' });
     }
 
-    if (!decoded) {
-      throw verifyError || new Error('Token verification failed');
-    }
+    const decoded = jwt.verify(token, jwtSecret);
     
-    // Get full user data (now async)
+    // Get full user data (async)
     const user = await findUserById(decoded.id);
     if (!user) {
       return res.status(401).json({ message: 'User not found' });

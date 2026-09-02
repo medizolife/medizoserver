@@ -48,6 +48,16 @@ const initializeApp = async () => {
   }
 };
 
+const helmet = require('helmet');
+const { generalApiLimiter } = require('./middleware/rateLimiter');
+
+// Security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+  contentSecurityPolicy: false // Allows dynamic frontend rendering & PDF canvas
+}));
+
 // Ensure uploads directory exists
 const uploadsDir = process.env.VERCEL ? '/tmp/uploads' : path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -72,31 +82,38 @@ const allowedOrigins = [
   'http://localhost:8081'
 ];
 
-// Middleware: Enable CORS for Vercel, localhost & custom domains & handle OPTIONS preflight
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // Server-to-server or non-browser client
+  if (allowedOrigins.includes(origin)) return true;
+  // Allow official Medizo subdomains & Vercel deployment previews
+  if (/^https:\/\/([a-z0-9-]+\.)?medizo\.life$/i.test(origin)) return true;
+  if (/^https:\/\/medizo-[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+  return false;
+};
+
+// Middleware: Strict CORS configuration & preflight handling
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
+  if (origin && isOriginAllowed(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-  } else if (origin) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
   }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return isOriginAllowed(origin) ? res.status(200).end() : res.status(403).end();
   }
   next();
 });
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Global Rate Limiting for API routes
+app.use('/api/', generalApiLimiter);
+
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 app.use(cookieParser());
-app.use(morgan('dev'));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // Middleware to ensure DB connection on serverless calls
 app.use(async (req, res, next) => {
@@ -106,7 +123,7 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Serve static files from uploads directory with D1 fallback for serverless deployments
+// Serve static files from uploads directory with path traversal protection & D1 fallback
 const Image = require('./models/ImageModel');
 app.get([
   '/api/uploads/records/:filename',
@@ -121,17 +138,27 @@ app.get([
   '/prescriptions/images/:filename'
 ], async (req, res) => {
   try {
-    const { filename } = req.params;
-    const filePath = path.join(uploadsDir, 'records', filename);
-    if (fs.existsSync(filePath)) {
+    const rawFilename = req.params.filename || '';
+    // Sanitize filename to prevent path traversal
+    const safeFilename = path.basename(rawFilename);
+    const folder = req.params.folder ? path.basename(req.params.folder) : 'records';
+    
+    const filePath = path.join(uploadsDir, folder, safeFilename);
+    const directPath = path.join(uploadsDir, safeFilename);
+    
+    // Validate resolved paths remain inside uploadsDir
+    if (filePath.startsWith(uploadsDir) && fs.existsSync(filePath)) {
       return res.sendFile(filePath);
     }
-    const img = await Image.findOne({ filename });
+    if (directPath.startsWith(uploadsDir) && fs.existsSync(directPath)) {
+      return res.sendFile(directPath);
+    }
+    
+    const img = await Image.findOne({ filename: safeFilename });
     if (img && img.data) {
       res.set('Content-Type', img.mimeType || 'application/octet-stream');
       res.set('Content-Disposition', 'inline');
       res.set('Cache-Control', 'public, max-age=31536000');
-      res.set('Access-Control-Allow-Origin', '*');
       return res.send(img.data);
     }
     return res.status(404).json({ message: 'File not found' });
@@ -141,7 +168,7 @@ app.get([
   }
 });
 
-app.use('/uploads', express.static(uploadsDir));
+app.use('/uploads', express.static(uploadsDir, { dotfiles: 'ignore', index: false }));
 
 // Routes
 app.use('/api/auth', authRoutes);

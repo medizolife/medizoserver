@@ -1,7 +1,8 @@
+const crypto = require('crypto');
 const { createUser, authenticateUser, authenticateUserByMobile, findUserByEmail, findUserByMobile, updateUser, findOrCreateGoogleUser } = require('../models/user');
 const { OAuth2Client } = require('google-auth-library');
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '972944325297-fh67828kvguogf9coekjn6q07a2krv8o.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const ALLOWED_CLIENT_IDS = [
   GOOGLE_CLIENT_ID,
   '972944325297-fh67828kvguogf9coekjn6q07a2krv8o.apps.googleusercontent.com',
@@ -36,11 +37,12 @@ const validateRegistrationData = (userData) => {
   if (hasEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userData.email.trim())) {
     errors.push('Invalid email format');
   }
-  if (!userData.password || userData.password.length < 4) {
-    errors.push('Password must be at least 4 characters');
+  if (!userData.password || userData.password.length < 8) {
+    errors.push('Password must be at least 8 characters long');
   }
-  if (!userData.role || !['doctor', 'patient', 'pharmacist', 'nurse', 'admin'].includes(userData.role)) {
-    errors.push('Valid role is required (doctor, patient, pharmacist, nurse, or admin)');
+  // Disallow admin role in public self-registration (admin accounts must be provisioned internally)
+  if (!userData.role || !['doctor', 'patient', 'pharmacist', 'nurse'].includes(userData.role)) {
+    errors.push('Valid role is required (doctor, patient, pharmacist, or nurse)');
   }
 
   return { isValid: errors.length === 0, errors };
@@ -62,11 +64,14 @@ const registerUser = async (userData) => {
 
   // Generate JWT token
   const jwt = require('jsonwebtoken');
-  const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error('JWT_SECRET is not configured');
+  }
   const token = jwt.sign(
     { id: user.id, role: user.role },
     jwtSecret,
-    { expiresIn: '30d' }
+    { expiresIn: '7d' }
   );
 
   return { user, token };
@@ -76,11 +81,12 @@ const registerUser = async (userData) => {
  * Login user with email and password
  * @param {string} email
  * @param {string} password
+ * @param {string|null} clientIp
  * @returns {Promise<{user: Object, token: string}>}
  */
-const loginUser = async (email, password) => {
+const loginUser = async (email, password, clientIp = null) => {
   const cleanEmail = email ? String(email).trim().toLowerCase() : '';
-  return await authenticateUser(cleanEmail, password);
+  return await authenticateUser(cleanEmail, password, clientIp);
 };
 
 /**
@@ -88,9 +94,10 @@ const loginUser = async (email, password) => {
  * @param {string} mobileNumber
  * @param {string} dateOfBirth
  * @param {string} password
+ * @param {string|null} clientIp
  */
-const loginUserByMobile = async (mobileNumber, dateOfBirth, password) => {
-  return await authenticateUserByMobile(mobileNumber, dateOfBirth, password);
+const loginUserByMobile = async (mobileNumber, dateOfBirth, password, clientIp = null) => {
+  return await authenticateUserByMobile(mobileNumber, dateOfBirth, password, clientIp);
 };
 
 /**
@@ -108,9 +115,9 @@ const sendForgotPasswordEmail = async (emailOrMobile) => {
     throw new Error('No user found with the provided Email or Mobile number');
   }
 
-  // Generate 6-digit OTP
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+  // Generate cryptographically secure 6-digit OTP
+  const otpCode = crypto.randomInt(100000, 1000000).toString();
+  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
 
   // Persist to user record in D1
   try {
@@ -138,7 +145,7 @@ const sendForgotPasswordEmail = async (emailOrMobile) => {
         <div style="background: #e6f4f0; padding: 16px; border-radius: 10px; text-align: center; margin: 20px 0;">
           <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1A312C;">${otpCode}</span>
         </div>
-        <p>This code is valid for 15 minutes. If you did not request a password reset, please ignore this email.</p>
+        <p>This code is valid for 5 minutes. If you did not request a password reset, please ignore this email.</p>
         <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
         <p style="font-size: 12px; color: #666;">Sent automatically by Medizo Life Healthcare Systems</p>
       </div>
@@ -161,7 +168,7 @@ const verifyGoogleToken = async (credential) => {
     throw new Error('Google token is required');
   }
 
-  // 1. Try standard google-auth-library verification
+  // Cryptographically verify ID token signature against Google certificates
   try {
     const ticket = await googleClient.verifyIdToken({
       idToken: credential,
@@ -178,33 +185,8 @@ const verifyGoogleToken = async (credential) => {
       };
     }
   } catch (verifyError) {
-    console.warn('googleClient.verifyIdToken notice (trying decoded token verification):', verifyError.message);
-  }
-
-  // 2. Robust fallback for native Android/iOS/Web tokens (JWT decoding & validation)
-  try {
-    const jwt = require('jsonwebtoken');
-    const decoded = jwt.decode(credential);
-    if (
-      decoded && 
-      (decoded.iss === 'https://accounts.google.com' || decoded.iss === 'accounts.google.com') && 
-      decoded.sub && 
-      decoded.email
-    ) {
-      // Check expiration if present
-      if (decoded.exp && decoded.exp * 1000 < Date.now() - 300000) {
-        throw new Error('Google token has expired');
-      }
-      return {
-        googleId: decoded.sub,
-        email: decoded.email.toLowerCase(),
-        firstName: decoded.given_name || decoded.name?.split(' ')[0] || 'User',
-        lastName: decoded.family_name || decoded.name?.split(' ').slice(1).join(' ') || '',
-        picture: decoded.picture
-      };
-    }
-  } catch (decodeError) {
-    console.error('Decoded Google token verification error:', decodeError);
+    console.error('Google token cryptographic verification failed:', verifyError.message);
+    throw new Error('Invalid or expired Google authentication token');
   }
 
   throw new Error('Invalid Google token');
@@ -259,14 +241,15 @@ const updateUserPhone = async (userId, phone) => {
  * Login or register user via Google OAuth
  * @param {string} credential Google ID token
  * @param {string} role User role (doctor/patient) - only used for new users
+ * @param {string|null} clientIp Client IP Address
  */
-const googleLogin = async (credential, role = null) => {
+const googleLogin = async (credential, role = null, clientIp = null) => {
   try {
     // Verify Google token
     const googleUserInfo = await verifyGoogleToken(credential);
     
     // Find or create user
-    const result = await findOrCreateGoogleUser(googleUserInfo, role);
+    const result = await findOrCreateGoogleUser(googleUserInfo, role, clientIp);
     
     return result;
   } catch (error) {
@@ -274,7 +257,7 @@ const googleLogin = async (credential, role = null) => {
   }
 };
 
-// In-memory OTP storage for zero-latency verification (key: email, value: { code, expires })
+// In-memory OTP storage with attempt tracking (key: email, value: { code, expires, attempts })
 const loginOtpStore = new Map();
 
 /**
@@ -296,13 +279,15 @@ const sendLoginOtp = async (email) => {
     throw new Error('No Medizo account found with this email address. Please create an account first to select your role (Doctor or Patient).');
   }
 
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Date.now() + 15 * 60 * 1000; // Valid for 15 minutes
+  // Cryptographically secure 6-digit OTP
+  const otpCode = crypto.randomInt(100000, 1000000).toString();
+  const expiresAt = Date.now() + 5 * 60 * 1000; // Valid for 5 minutes
 
-  // 1. Store in-memory for instant verification
+  // 1. Store in-memory for instant verification with attempt tracking
   loginOtpStore.set(cleanEmail, {
     code: otpCode,
-    expires: expiresAt
+    expires: expiresAt,
+    attempts: 0
   });
 
   // 2. Persist to D1 user record
@@ -325,7 +310,7 @@ const sendLoginOtp = async (email) => {
           <div style="background: #e6f4f0; padding: 16px; border-radius: 10px; text-align: center; margin: 20px 0;">
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #1A312C;">${otpCode}</span>
           </div>
-          <p>This code is valid for 15 minutes. If you did not request this login code, please ignore this message.</p>
+          <p>This code is valid for 5 minutes. If you did not request this login code, please ignore this message.</p>
           <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
           <p style="font-size: 12px; color: #666;">Sent automatically by Medizo Life Healthcare Systems</p>
         </div>
@@ -346,44 +331,68 @@ const sendLoginOtp = async (email) => {
  * Login user via Email and OTP
  * @param {string} email 
  * @param {string} otp 
+ * @param {string|null} clientIp
  */
-const loginUserByEmailOtp = async (email, otp) => {
-  if (!email || !otp) {
-    throw new Error('Email and OTP code are required');
-  }
-
-  const cleanEmail = email.trim().toLowerCase();
+const loginUserByEmailOtp = async (email, otp, clientIp = null) => {
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
   const cleanOtp = String(otp).trim();
 
   const user = await findUserByEmail(cleanEmail);
   if (!user) {
-    throw new Error('No Medizo account found with this email address. Please create an account first to select your role (Doctor or Patient).');
+    throw new Error('No account found with this email address');
   }
 
   const now = Date.now();
+  const stored = loginOtpStore.get(cleanEmail);
 
-  // Dual Check: In-memory store OR D1 Database Record
-  const cachedOtp = loginOtpStore.get(cleanEmail);
-  const isValidInStore = cachedOtp && String(cachedOtp.code).trim() === cleanOtp && Number(cachedOtp.expires) > now;
+  // Check attempt limit
+  if (stored && stored.attempts >= 5) {
+    loginOtpStore.delete(cleanEmail);
+    try {
+      await updateUser(user.id, { loginOtp: '', loginOtpExpires: 0 });
+    } catch (e) {}
+    throw new Error('Too many failed OTP attempts. Please request a new verification code.');
+  }
+
+  const isValidInStore = stored && stored.code === cleanOtp && stored.expires > now;
   const isValidOnUser = user.loginOtp && String(user.loginOtp).trim() === cleanOtp && Number(user.loginOtpExpires) > now;
 
   if (!isValidInStore && !isValidOnUser) {
+    if (stored) {
+      stored.attempts = (stored.attempts || 0) + 1;
+      loginOtpStore.set(cleanEmail, stored);
+    }
     throw new Error('Invalid or expired OTP code. Please request a new verification code.');
   }
 
-  // Clear used OTP from memory and DB
+  // Clear used OTP and update lastLogin & lastLoginIp
   loginOtpStore.delete(cleanEmail);
+  const nowIso = new Date().toISOString();
   try {
-    await updateUser(user.id, { loginOtp: '', loginOtpExpires: 0 });
+    const updatePayload = { loginOtp: '', loginOtpExpires: 0, lastLogin: nowIso, updatedAt: nowIso };
+    if (clientIp) {
+      updatePayload.lastLoginIp = String(clientIp);
+      updatePayload.ipAddress = String(clientIp);
+    }
+    await updateUser(user.id, updatePayload);
+    user.lastLogin = nowIso;
+    if (clientIp) {
+      user.lastLoginIp = String(clientIp);
+      user.ipAddress = String(clientIp);
+    }
+    user.updatedAt = nowIso;
   } catch (e) {}
 
   // Generate JWT token
   const jwt = require('jsonwebtoken');
-  const jwtSecret = process.env.JWT_SECRET || 'medizo_jwt_secret_key_2026_health';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    throw new Error('JWT_SECRET is not configured');
+  }
   const token = jwt.sign(
     { id: user.id, role: user.role },
     jwtSecret,
-    { expiresIn: '30d' }
+    { expiresIn: '7d' }
   );
 
   const sanitizeUser = (u) => {

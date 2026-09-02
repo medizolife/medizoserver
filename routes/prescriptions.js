@@ -20,8 +20,29 @@ const {
 } = require('../models/prescription');
 const { findUserById, updateUser } = require('../models/user');
 const { auth, doctor } = require('../middleware/auth');
+const { publicLookupLimiter } = require('../middleware/rateLimiter');
 const { sendPrescriptionNotification } = require('../services/email');
 const { getFamilyProfileById } = require('../models/familyProfile');
+
+/**
+ * Mask Patient Name for unauthenticated public preview
+ */
+function maskPatientName(name) {
+  if (!name || name.toLowerCase() === 'unknown patient') return 'Patient';
+  const parts = String(name).trim().split(/\s+/);
+  return parts.map(p => {
+    if (p.length <= 2) return p[0] + '*';
+    return p[0] + '*'.repeat(Math.max(1, p.length - 2)) + p[p.length - 1];
+  }).join(' ');
+}
+
+/**
+ * Mask Email for unauthenticated public preview
+ */
+function maskEmail(email) {
+  if (!email || email === 'N/A' || email.endsWith('@patient.medizo.life')) return 'N/A';
+  return String(email).replace(/(.{2})(.*)(?=@)/, '$1***');
+}
 
 // Configure Multer for external record uploads
 const recordsDir = (process.env.VERCEL || typeof __dirname === 'undefined')
@@ -343,7 +364,7 @@ router.get('/', auth, async (req, res) => {
  * @desc    Lookup prescription by QR code string, URL, or partial ID
  * @access  Public / Authenticated
  */
-router.get(['/lookup/:code', '/public/lookup/:code', '/verify/:code'], async (req, res) => {
+router.get(['/lookup/:code', '/public/lookup/:code', '/verify/:code'], publicLookupLimiter, async (req, res) => {
   try {
     let code = req.params.code || '';
     if (typeof code === 'string') {
@@ -356,7 +377,6 @@ router.get(['/lookup/:code', '/public/lookup/:code', '/verify/:code'], async (re
       }
       code = code.split('?')[0].trim();
     }
-    console.log('[Prescriptions] Lookup by code/id:', code);
     
     let prescription = null;
 
@@ -392,16 +412,13 @@ router.get(['/lookup/:code', '/public/lookup/:code', '/verify/:code'], async (re
     // Try partial ID match (last N chars)
     if (!prescription) {
       try {
-        const { results } = await queryD1('SELECT * FROM prescriptions');
-        const jsonFields = ['vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
-          'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
-          'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
-          'warningSigns', 'followUpInfo', 'dispensedBy', 'dispenseHistory'];
-        prescription = results.find(d => {
-          const id = d.id || '';
-          return id.endsWith(code) || id.includes(code);
-        });
-        if (prescription) {
+        const { results } = await queryD1('SELECT * FROM prescriptions WHERE id LIKE ? LIMIT 1', [`%${code}%`]);
+        if (results && results.length > 0) {
+          prescription = results[0];
+          const jsonFields = ['vitalSigns', 'presentingComplaints', 'clinicalFindings', 'provisionalDiagnosis',
+            'currentMedications', 'pastSurgicalHistory', 'medications', 'medicationNotes',
+            'testsRequired', 'investigations', 'dietModifications', 'lifestyleChanges',
+            'warningSigns', 'followUpInfo', 'dispensedBy', 'dispenseHistory'];
           for (const field of jsonFields) {
             if (typeof prescription[field] === 'string') {
               try { prescription[field] = JSON.parse(prescription[field]); } catch (e) {}
@@ -430,12 +447,15 @@ router.get(['/lookup/:code', '/public/lookup/:code', '/verify/:code'], async (re
       ? prescription.medications.map(m => typeof m === 'object' && m ? (m.name || m.medicationName || '') : String(m)).filter(Boolean)
       : (prescription.medication ? [prescription.medication] : []);
 
+    const rawPatientName = patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Patient');
+    const rawPatientEmail = patient ? (patient.email || 'N/A') : (prescription.patientEmail || 'N/A');
+
     const enhanced = {
       ...prescription,
       id: prescription.id,
-      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Unknown Patient'),
-      patientEmail: patient ? patient.email || 'N/A' : (prescription.patientEmail || 'N/A'),
-      doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : (prescription.doctorName || 'Unknown Doctor'),
+      patientName: maskPatientName(rawPatientName),
+      patientEmail: maskEmail(rawPatientEmail),
+      doctorName: doc ? `Dr. ${doc.firstName || ''} ${doc.lastName || ''}`.trim() : (prescription.doctorName || 'Doctor'),
       doctorSpecialization: doc ? doc.specialization || 'General Physician' : (prescription.doctorSpecialization || 'General Physician'),
       doctorVerified: doc?.digilockerVerified || false,
       medicationNames: medNames,
@@ -1012,7 +1032,7 @@ router.get('/lookup/:code', async (req, res) => {
  * @desc    Get prescription by ID (Public shared view - no authentication required)
  * @access  Public
  */
-router.get(['/public/:id', '/verify-rx/:id'], async (req, res) => {
+router.get(['/public/:id', '/verify-rx/:id'], publicLookupLimiter, async (req, res) => {
   try {
     let prescriptionId = req.params.id || '';
     let prescription = await findPrescriptionById(prescriptionId);
@@ -1030,10 +1050,14 @@ router.get(['/public/:id', '/verify-rx/:id'], async (req, res) => {
       doctorUser = await findUserById(prescription.doctorId);
     }
 
+    const rawPatientName = patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Patient');
+    const rawPatientEmail = patient ? (patient.email || 'N/A') : (prescription.patientEmail || 'N/A');
+
     const enhanced = {
       ...prescription,
-      patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : (prescription.patientName || 'Patient'),
-      patientDOB: patient ? patient.dateOfBirth : prescription.patientDOB,
+      patientName: maskPatientName(rawPatientName),
+      patientEmail: maskEmail(rawPatientEmail),
+      patientDOB: prescription.patientDOB ? '****-**-**' : '',
       patientGender: patient ? patient.gender : prescription.patientGender,
       doctorName: doctorUser ? `Dr. ${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() : (prescription.doctorName || 'Doctor'),
       doctorSpecialization: doctorUser ? doctorUser.specialization : (prescription.doctorSpecialization || 'General Physician'),
@@ -1041,6 +1065,7 @@ router.get(['/public/:id', '/verify-rx/:id'], async (req, res) => {
       doctorClinicName: doctorUser ? doctorUser.clinicName : prescription.doctorClinicName,
       doctorStamp: doctorUser ? doctorUser.stamp : prescription.doctorStamp,
       doctorSignature: doctorUser ? doctorUser.signature : prescription.doctorSignature,
+      requiresBirthYearVerification: true
     };
     
     res.json(enhanced);
@@ -1176,8 +1201,15 @@ router.post('/', doctor, async (req, res) => {
       profileAge = String(patient.age);
     }
     
+    // Parse custom issued date if provided by doctor
+    const customDate = req.body.createdAt || req.body.issuedDate || req.body.prescriptionDate;
+    let customCreatedAt = undefined;
+    if (customDate && !isNaN(new Date(customDate).getTime())) {
+      customCreatedAt = new Date(customDate).toISOString();
+    }
+    
     // Create prescription with comprehensive data
-    const prescription = await createPrescription({
+    const prescriptionPayload = {
       doctorId,
       patientId: resolvedPatientId,
       patientName: profilePatientName,
@@ -1215,7 +1247,13 @@ router.post('/', doctor, async (req, res) => {
       testsRequired: testsRequired || [],
       instructions: instructions || '',
       followUpDate: followUpDate || (followUpInfo && followUpInfo.appointmentDate ? followUpInfo.appointmentDate : null)
-    });
+    };
+    
+    if (customCreatedAt) {
+      prescriptionPayload.createdAt = customCreatedAt;
+    }
+
+    const prescription = await createPrescription(prescriptionPayload);
     
     // Get doctor data for email notification
     const doctorUser = await findUserById(doctorId);
@@ -1314,6 +1352,14 @@ router.put('/:id', doctor, async (req, res) => {
     if (notes !== undefined) updateData.notes = notes;
     if (testReports !== undefined) updateData.testReports = testReports;
     if (status !== undefined) updateData.status = status;
+    
+    // Allow updating prescription issued date (createdAt)
+    const dateToUpdate = req.body.createdAt || req.body.issuedDate || req.body.prescriptionDate;
+    if (dateToUpdate !== undefined) {
+      if (dateToUpdate && !isNaN(new Date(dateToUpdate).getTime())) {
+        updateData.createdAt = new Date(dateToUpdate).toISOString();
+      }
+    }
     
     // Legacy fields
     if (medication !== undefined) updateData.medication = medication;

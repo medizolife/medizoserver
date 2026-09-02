@@ -7,6 +7,7 @@ const { getUsers, findUserById, findUserByEmail, findUserByMobile, updateUser, c
 const { findPrescriptionsByDoctorId } = require('../models/prescription');
 const { auth, doctor, patient } = require('../middleware/auth');
 const { getFamilyProfilesByAccountId, getFamilyProfileById, getProfileByDisplayId } = require('../models/familyProfile');
+const { canAccessPatientData } = require('../services/authzService');
 
 // Configure multer for profile picture uploads
 const storage = multer.memoryStorage(); // Use memory storage for serverless compatibility
@@ -257,9 +258,9 @@ router.post('/patients/create', doctor, async (req, res) => {
     }
 
     res.status(201).json({
-      message: `Patient account created successfully. Temporary password: ${tempPassword}`,
+      message: 'Patient account created and linked successfully.',
       patient: newPatient,
-      tempPassword,
+      tempPassword: '', // Sanitized for security; initial credentials managed via SMS/Email setup
       guardianId: resolvedGuardianId || undefined,
       guardianName: resolvedGuardianName || undefined
     });
@@ -746,8 +747,13 @@ router.put('/password', auth, async (req, res) => {
  */
 router.get('/patients/:id', doctor, async (req, res) => {
   try {
-    const patient = await findUserById(req.params.id);
-    
+    const patientId = req.params.id;
+    const hasAccess = await canAccessPatientData(req.user, patientId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied: You are not authorized to access this patient record' });
+    }
+
+    const patient = await findUserById(patientId);
     if (!patient || patient.role !== 'patient') {
       return res.status(404).json({ message: 'Patient not found' });
     }
@@ -762,13 +768,18 @@ router.get('/patients/:id', doctor, async (req, res) => {
 
 /**
  * @route   PUT /api/users/patients/:id
- * @desc    Update patient (doctors only)
+ * @desc    Update patient (doctors only with authorization)
  * @access  Private (Doctor)
  */
 router.put('/patients/:id', doctor, async (req, res) => {
   try {
-    const patient = await findUserById(req.params.id);
-    
+    const patientId = req.params.id;
+    const hasAccess = await canAccessPatientData(req.user, patientId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied: You are not authorized to update this patient record' });
+    }
+
+    const patient = await findUserById(patientId);
     if (!patient || patient.role !== 'patient') {
       return res.status(404).json({ message: 'Patient not found' });
     }
@@ -778,7 +789,7 @@ router.put('/patients/:id', doctor, async (req, res) => {
     delete updateData.role;
     delete updateData.id;
 
-    const updatedPatient = await updateUser(req.params.id, updateData);
+    const updatedPatient = await updateUser(patientId, updateData);
     const { password, ...patientData } = updatedPatient;
     
     res.json({
@@ -793,19 +804,25 @@ router.put('/patients/:id', doctor, async (req, res) => {
 
 /**
  * @route   DELETE /api/users/patients/:id
- * @desc    Delete patient (doctors only)
- * @access  Private (Doctor)
+ * @desc    Delete patient (authorized doctor or admin only)
+ * @access  Private (Doctor/Admin)
  */
 router.delete('/patients/:id', doctor, async (req, res) => {
   try {
+    const patientId = req.params.id;
+    const hasAccess = await canAccessPatientData(req.user, patientId);
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied: You are not authorized to delete this patient record' });
+    }
+
     const { deleteUser } = require('../models/user');
-    const patient = await findUserById(req.params.id);
+    const patient = await findUserById(patientId);
     
     if (!patient || patient.role !== 'patient') {
       return res.status(404).json({ message: 'Patient not found' });
     }
 
-    deleteUser(req.params.id);
+    await deleteUser(patientId);
     
     res.json({
       message: 'Patient deleted successfully'

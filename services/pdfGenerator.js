@@ -470,10 +470,11 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
 
       doc.font('Helvetica-Bold').fontSize(8).fillColor(C.secondary)
         .text('Verification Portal:', M, metaY + 26, { continued: true });
-      doc.font('Helvetica').fillColor(C.text).text('  medizoprod.medizolife.workers.dev');
+      doc.font('Helvetica').fillColor(C.text).text('  medizo.life');
 
       // ─── 3. BORDERLESS LARGE PURE BLACK VECTOR QR CODE (RIGHT SIDE) ───
-      const qrPayload = `https://medizoprod.medizolife.workers.dev/dashboard?rxId=${prescriptionId}`;
+      const clientBaseUrl = (process.env.CLIENT_URL || 'https://medizo.life').replace(/\/+$/, '');
+      const qrPayload = `${clientBaseUrl}/dashboard?rxId=${prescriptionId}`;
       drawVectorQr(doc, qrPayload, qrX, qrY, qrSize, '#000000', null);
 
       y = topY + qrSize + 6;

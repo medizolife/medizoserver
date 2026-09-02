@@ -230,7 +230,7 @@ const createPrescription = async (prescriptionData) => {
       'dietModifications', 'lifestyleChanges', 'warningSigns',
       'followUpDate', 'followUpInfo', 'emergencyHelpline',
       'qrCode', 'status', 'dispensedStatus', 'dispensedAt', 'dispensedBy', 'dispenseNotes',
-      'dispenseHistory', 'dispenseCount'
+      'dispenseHistory', 'dispenseCount', 'createdAt'
     ];
 
     const fields = [];
@@ -284,7 +284,7 @@ const updatePrescription = async (id, prescriptionData) => {
     const setClauses = [];
     const values = [];
 
-    const skipFields = ['id', 'createdAt'];
+    const skipFields = ['id'];
     for (const [key, value] of Object.entries(data)) {
       if (skipFields.includes(key) || value === undefined) continue;
       setClauses.push(`${key} = ?`);

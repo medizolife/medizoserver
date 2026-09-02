@@ -1,22 +1,33 @@
 const express = require('express');
 const router = express.Router();
 const { registerUser, loginUser, loginUserByMobile, sendForgotPasswordEmail, updateUserEmail, updateUserPhone, validateRegistrationData, googleLogin, sendLoginOtp, loginUserByEmailOtp } = require('../services/authService');
+const { authLimiter, otpLimiter, otpVerifyLimiter } = require('../middleware/rateLimiter');
+
+const getClientIp = (req) => {
+  return req.headers['cf-connecting-ip'] || 
+         req.headers['x-real-ip'] || 
+         (req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) || 
+         req.ip || 
+         req.socket?.remoteAddress || 
+         null;
+};
 
 /**
  * @route   POST /api/auth/google
  * @desc    Authenticate with Google OAuth
  * @access  Public
  */
-router.post('/google', async (req, res) => {
+router.post('/google', authLimiter, async (req, res) => {
   try {
     const { credential, role } = req.body;
+    const clientIp = getClientIp(req);
     
     if (!credential) {
       return res.status(400).json({ message: 'Google credential is required' });
     }
     
     // Authenticate or register user with Google
-    const result = await googleLogin(credential, role);
+    const result = await googleLogin(credential, role, clientIp);
     
     res.json({ 
       message: result.requiresRoleSelection ? 'Role selection required' : (result.isNewUser ? 'Account created successfully' : 'Login successful'),
@@ -28,7 +39,7 @@ router.post('/google', async (req, res) => {
     });
   } catch (error) {
     console.error('Google auth error:', error);
-    res.status(401).json({ message: error.message });
+    res.status(401).json({ message: error.message || 'Google authentication failed' });
   }
 });
 
@@ -37,7 +48,7 @@ router.post('/google', async (req, res) => {
  * @desc    Send login OTP code to email
  * @access  Public
  */
-router.post('/send-login-otp', async (req, res) => {
+router.post('/send-login-otp', otpLimiter, async (req, res) => {
   try {
     const { email } = req.body;
     
@@ -58,15 +69,16 @@ router.post('/send-login-otp', async (req, res) => {
  * @desc    Authenticate user via Email & 6-digit OTP
  * @access  Public
  */
-router.post('/login-email-otp', async (req, res) => {
+router.post('/login-email-otp', otpVerifyLimiter, async (req, res) => {
   try {
     const { email, otp } = req.body;
+    const clientIp = getClientIp(req);
     
     if (!email || !otp) {
       return res.status(400).json({ message: 'Email and OTP verification code are required' });
     }
     
-    const { user, token } = await loginUserByEmailOtp(email, otp);
+    const { user, token } = await loginUserByEmailOtp(email, otp, clientIp);
     
     res.json({ 
       message: 'Login successful',
@@ -84,9 +96,10 @@ router.post('/login-email-otp', async (req, res) => {
  * @desc    Register a new user
  * @access  Public
  */
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const userData = req.body;
+    const clientIp = getClientIp(req);
     
     // Validate input data
     const validation = validateRegistrationData(userData);
@@ -98,7 +111,7 @@ router.post('/register', async (req, res) => {
     }
     
     // Register user
-    const { user, token } = await registerUser(userData);
+    const { user, token } = await registerUser({ ...userData, lastLoginIp: clientIp, ipAddress: clientIp });
     
     res.status(201).json({ 
       message: 'User registered successfully',
@@ -116,16 +129,17 @@ router.post('/register', async (req, res) => {
  * @desc    Authenticate user & get token
  * @access  Public
  */
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
+    const clientIp = getClientIp(req);
     
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' });
     }
     
     // Authenticate user
-    const { user, token } = await loginUser(email, password);
+    const { user, token } = await loginUser(email, password, clientIp);
     
     res.json({ 
       message: 'Login successful',
@@ -143,15 +157,16 @@ router.post('/login', async (req, res) => {
  * @desc    Authenticate user via Mobile Number, DOB & Password
  * @access  Public
  */
-router.post('/login-mobile', async (req, res) => {
+router.post('/login-mobile', authLimiter, async (req, res) => {
   try {
     const { mobileNumber, dateOfBirth, password } = req.body;
+    const clientIp = getClientIp(req);
     
     if (!mobileNumber || !password) {
       return res.status(400).json({ message: 'Mobile number and password are required' });
     }
     
-    const { user, token } = await loginUserByMobile(mobileNumber, dateOfBirth, password);
+    const { user, token } = await loginUserByMobile(mobileNumber, dateOfBirth, password, clientIp);
     
     res.json({ 
       message: 'Login successful',
@@ -169,7 +184,7 @@ router.post('/login-mobile', async (req, res) => {
  * @desc    Send password reset OTP via GoDaddy email
  * @access  Public
  */
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', otpLimiter, async (req, res) => {
   try {
     const { emailOrMobile } = req.body;
     

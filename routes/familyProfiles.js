@@ -152,17 +152,19 @@ router.post('/', patient, async (req, res) => {
 /**
  * @route   PUT /api/family-profiles/:profileId
  * @desc    Update a family profile
- * @access  Private (Patient owner only)
+ * @access  Private (Patient owner, Doctor, Admin)
  */
-router.put('/:profileId', patient, async (req, res) => {
+router.put('/:profileId', auth, async (req, res) => {
   try {
     const profile = await getFamilyProfileById(req.params.profileId);
     if (!profile) {
       return res.status(404).json({ message: 'Profile not found' });
     }
 
-    // Only owner can update
-    if (profile.accountId !== req.user.id) {
+    // Owner, doctor, or admin can update
+    const isOwner = profile.accountId === req.user.id;
+    const isDoctorOrAdmin = req.user.role === 'doctor' || req.user.role === 'admin';
+    if (!isOwner && !isDoctorOrAdmin) {
       return res.status(403).json({ message: 'Access denied' });
     }
 

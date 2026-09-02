@@ -8,9 +8,9 @@
  */
 
 function getD1Config() {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '2f740823719b4ab11c6b134a71e7a3b9';
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '';
   const apiToken = process.env.CLOUDFLARE_API_TOKEN || '';
-  const dbId = process.env.CLOUDFLARE_D1_DATABASE_ID || '206ec373-b5bb-4ec4-8304-778692299181';
+  const dbId = process.env.CLOUDFLARE_D1_DATABASE_ID || '';
   return { accountId, apiToken, dbId };
 }
 
@@ -21,7 +21,7 @@ function getD1Config() {
 function isD1Configured() {
   if (globalThis.__D1_DB__ || globalThis.DB) return true;
   const { accountId, apiToken, dbId } = getD1Config();
-  return Boolean(accountId && dbId);
+  return Boolean(accountId && apiToken && dbId);
 }
 
 /**

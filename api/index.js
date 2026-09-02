@@ -47,6 +47,16 @@ const initializeApp = async () => {
   }
 };
 
+const helmet = require('helmet');
+const { generalApiLimiter } = require('../middleware/rateLimiter');
+
+// Security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
+  contentSecurityPolicy: false // Allows dynamic frontend rendering & PDF canvas
+}));
+
 // Allowed origins for CORS
 const allowedOrigins = [
   'https://www.medizo.life',
@@ -61,30 +71,36 @@ const allowedOrigins = [
   'http://localhost:8081'
 ];
 
-// Enable CORS for all frontend requests & handle preflight OPTIONS immediately
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // Server-to-server or non-browser client
+  if (allowedOrigins.includes(origin)) return true;
+  // Allow official Medizo subdomains & Vercel deployment previews
+  if (/^https:\/\/([a-z0-9-]+\.)?medizo\.life$/i.test(origin)) return true;
+  if (/^https:\/\/medizo-[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+  return false;
+};
+
+// Middleware: Strict CORS configuration & preflight handling
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
+  if (origin && isOriginAllowed(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-  } else if (origin) {
-    // Allow any origin in development, but log unknown origins
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
   }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token, Accept');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return isOriginAllowed(origin) ? res.status(200).end() : res.status(403).end();
   }
   next();
 });
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Global Rate Limiting for API routes
+app.use(['/api/', '/'], generalApiLimiter);
+
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 app.use(cookieParser());
 
 // Initialize DB on cold start (non-blocking for errors)
@@ -104,25 +120,26 @@ const uploadsDir = (process.env.VERCEL || typeof __dirname === 'undefined')
   ? '/tmp/uploads' 
   : path.join(__dirname, '../uploads');
 
-// Universal file server (Disk + Cloudflare D1 fallback)
+// Universal file server (Disk + Cloudflare D1 fallback) with path traversal protection
 const serveUploadedFile = async (req, res) => {
   try {
-    const filename = req.params.filename;
-    if (!filename) {
+    const rawFilename = req.params.filename;
+    if (!rawFilename) {
       return res.status(400).json({ message: 'Filename required' });
     }
+    const safeFilename = path.basename(rawFilename);
+    const folder = req.params.folder ? path.basename(req.params.folder) : 'records';
 
     // 1. Try local filesystem if available (Node.js environment)
     if (typeof fs !== 'undefined' && fs.existsSync && typeof path !== 'undefined') {
       const possiblePaths = [
-        path.join(uploadsDir, 'records', filename),
-        path.join(uploadsDir, filename),
-        req.params.folder ? path.join(uploadsDir, req.params.folder, filename) : null
+        path.join(uploadsDir, folder, safeFilename),
+        path.join(uploadsDir, safeFilename)
       ].filter(Boolean);
 
       for (const p of possiblePaths) {
         try {
-          if (fs.existsSync(p)) {
+          if (p.startsWith(uploadsDir) && fs.existsSync(p)) {
             return res.sendFile(p);
           }
         } catch (e) {}
@@ -130,12 +147,11 @@ const serveUploadedFile = async (req, res) => {
     }
 
     // 2. Query Cloudflare D1 images table
-    const image = await Image.findOne({ filename });
+    const image = await Image.findOne({ filename: safeFilename });
     if (image && image.data) {
       res.set('Content-Type', image.mimeType || 'application/octet-stream');
       res.set('Content-Disposition', 'inline');
       res.set('Cache-Control', 'public, max-age=31536000');
-      res.set('Access-Control-Allow-Origin', '*');
       return res.send(image.data);
     }
 

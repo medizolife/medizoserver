@@ -13,6 +13,61 @@ try {
 }
 
 /**
+ * @route   POST /api/digilocker/start-auth
+ * @desc    Build DigiLocker OAuth2 authorization URL securely via API request (No token in URL)
+ * @access  Private (Doctor only)
+ */
+router.post('/start-auth', doctor, (req, res) => {
+  const clientId = process.env.DIGILOCKER_CLIENT_ID || '';
+  const redirectUri = process.env.DIGILOCKER_REDIRECT_URI || '';
+  const baseUrl = process.env.DIGILOCKER_BASE_URL || 'https://digilocker.meripehchaan.gov.in';
+
+  if (!clientId || !redirectUri) {
+    return res.status(500).json({
+      error: 'DigiLocker is not configured. Please set DIGILOCKER_CLIENT_ID and DIGILOCKER_REDIRECT_URI in server .env.'
+    });
+  }
+
+  // Generate CSRF state, nonce, and PKCE code_verifier
+  const state = crypto.randomBytes(16).toString('hex');
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto
+    .createHash('sha256')
+    .update(codeVerifier)
+    .digest('base64url');
+
+  let originatingClientUrl = req.body?.client_url || req.headers.referer || req.headers.origin || process.env.CLIENT_URL || 'https://m.medizo.life';
+  try {
+    const parsed = new URL(originatingClientUrl);
+    originatingClientUrl = `${parsed.protocol}//${parsed.host}`;
+  } catch (e) {}
+  const encodedClientUrl = Buffer.from(originatingClientUrl).toString('base64url');
+
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    return res.status(500).json({ error: 'JWT_SECRET is not configured' });
+  }
+  const rawPayload = `${state}|${req.user.id}|${encodedClientUrl}|${codeVerifier}`;
+  const hmacSig = crypto.createHmac('sha256', secret).update(rawPayload).digest('hex');
+  const signedState = `${rawPayload}|${hmacSig}`;
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    state: signedState,
+    scope: 'openid',
+    nonce: nonce,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+
+  const authUrl = `${baseUrl}/public/oauth2/1/authorize?${params.toString()}`;
+  res.json({ authUrl });
+});
+
+/**
  * @route   GET /api/digilocker/authorize
  * @desc    Build DigiLocker OAuth2 authorization URL with PKCE and redirect
  * @access  Private (Doctor only)
