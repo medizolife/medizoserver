@@ -544,24 +544,43 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         const vx = [M + 8, M + 8 + vW, M + 8 + vW * 2, M + 8 + vW * 3];
 
         if (vs.bloodPressure) {
-          const bpParts = String(vs.bloodPressure).split('/');
+          const cleanBp = String(vs.bloodPressure).replace(/\s*mmHg/gi, '').trim();
+          const bpParts = cleanBp.split('/');
           if (bpParts.length === 2) {
             bv('BP:', `${bpParts[0].trim()} / ${bpParts[1].trim()} mmHg`, vx[0], y);
           } else {
-            bv('BP:', `${vs.bloodPressure} mmHg`, vx[0], y);
+            bv('BP:', `${cleanBp} mmHg`, vx[0], y);
           }
         }
         y += 12.5;
 
-        if (vs.pulse) bv('Pulse:', `${vs.pulse} bpm`, vx[0], y);
-        if (vs.temperature) bv('Temp:', `${vs.temperature} °F`, vx[1], y);
-        if (vs.spo2) bv('SpO2:', `${vs.spo2} %`, vx[2], y);
-        if (vs.respiratoryRate) bv('Resp. Rate:', `${vs.respiratoryRate} /min`, vx[3], y);
+        if (vs.pulse) {
+          const cleanPulse = String(vs.pulse).replace(/\s*bpm/gi, '').trim();
+          bv('Pulse:', `${cleanPulse} bpm`, vx[0], y);
+        }
+        if (vs.temperature) {
+          const cleanTemp = String(vs.temperature).replace(/\s*°?\s*[FC]/gi, '').trim();
+          bv('Temp:', `${cleanTemp} °F`, vx[1], y);
+        }
+        if (vs.spo2) {
+          const cleanSpo2 = String(vs.spo2).replace(/\s*%/g, '').trim();
+          bv('SpO2:', `${cleanSpo2} %`, vx[2], y);
+        }
+        if (vs.respiratoryRate) {
+          const cleanResp = String(vs.respiratoryRate).replace(/\s*(\/min|bpm|cpm)/gi, '').trim();
+          bv('Resp. Rate:', `${cleanResp} /min`, vx[3], y);
+        }
         y += 12.5;
 
         if (vs.bmi || vs.painScale) {
-          if (vs.bmi) bv('BMI:', `${vs.bmi} kg/m²`, vx[0], y);
-          if (vs.painScale) bv('Pain Scale:', `${vs.painScale} / 10`, vx[1], y);
+          if (vs.bmi) {
+            const cleanBmi = String(vs.bmi).replace(/\s*kg\/m²?/gi, '').trim();
+            bv('BMI:', `${cleanBmi} kg/m²`, vx[0], y);
+          }
+          if (vs.painScale) {
+            const cleanPain = String(vs.painScale).replace(/\s*\/\s*10/g, '').trim();
+            bv('Pain Scale:', `${cleanPain} / 10`, vx[1], y);
+          }
           y += 12.5;
         }
 
