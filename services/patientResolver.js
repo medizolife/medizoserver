@@ -212,19 +212,74 @@ async function syncPatientProfileUpdates(targetId, updateData = {}) {
     }
   }
 
-  // 3. Sync all prescriptions linked to this patient or account
-  const allIds = Array.from(linkedIds);
-  await syncPrescriptionsPatientData(allIds, updateData);
+  // 3. Sync prescriptions linked to this patient
+  const isDependent = familyProfile && familyProfile.profileIndex !== 0;
+  if (isDependent) {
+    // Dependent family profile: update ONLY prescriptions matching this family profile id
+    await syncPrescriptionsPatientData([String(familyProfile.id)], updateData);
+  } else {
+    // Primary account or self profile: update account's prescriptions
+    const allIds = Array.from(linkedIds);
+    await syncPrescriptionsPatientData(allIds, updateData);
+  }
 
   return {
     user: updatedUser || user,
     familyProfile: updatedProfile || familyProfile,
-    linkedIds: allIds
+    linkedIds: isDependent ? [String(familyProfile.id)] : Array.from(linkedIds)
   };
+}
+
+/**
+ * Synchronize doctor updates (name, specialization, licenseNumber)
+ * across all past/present prescriptions in the prescriptions table.
+ * @param {string} doctorId - Doctor user ID
+ * @param {Object} updateData - Updated doctor fields
+ */
+async function syncDoctorProfileUpdates(doctorId, updateData = {}) {
+  if (!doctorId) return false;
+  const { queryD1 } = require('../config/d1-client');
+  const clauses = [];
+  const params = [];
+
+  if (updateData.firstName !== undefined || updateData.lastName !== undefined) {
+    const doctorUser = await findUserById(doctorId);
+    const firstName = updateData.firstName !== undefined ? updateData.firstName : (doctorUser?.firstName || '');
+    const lastName = updateData.lastName !== undefined ? updateData.lastName : (doctorUser?.lastName || '');
+    const dName = `Dr. ${firstName} ${lastName}`.trim();
+    if (dName && dName !== 'Dr.') {
+      clauses.push('doctorName = ?');
+      params.push(dName);
+    }
+  }
+
+  if (updateData.specialization !== undefined && updateData.specialization) {
+    clauses.push('doctorSpecialization = ?');
+    params.push(String(updateData.specialization).trim());
+  }
+
+  if (updateData.licenseNumber !== undefined && updateData.licenseNumber) {
+    clauses.push('doctorLicenseNumber = ?');
+    params.push(String(updateData.licenseNumber).trim());
+  }
+
+  if (clauses.length === 0) return true;
+  clauses.push("updatedAt = datetime('now')");
+  params.push(String(doctorId));
+
+  try {
+    await queryD1(`UPDATE prescriptions SET ${clauses.join(', ')} WHERE doctorId = ?`, params);
+    console.log(`[syncDoctorProfileUpdates] Successfully updated prescriptions for doctor ${doctorId}`);
+    return true;
+  } catch (e) {
+    console.error('syncDoctorProfileUpdates error:', e);
+    return false;
+  }
 }
 
 module.exports = {
   calculateAge,
   resolvePatient,
-  syncPatientProfileUpdates
+  syncPatientProfileUpdates,
+  syncDoctorProfileUpdates
 };

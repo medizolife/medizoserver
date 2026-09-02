@@ -466,7 +466,7 @@ const syncPrescriptionsPatientData = async (patientIds = [], updateData = {}) =>
   clauses.push("updatedAt = datetime('now')");
 
   const placeholders = validIds.map(() => '?').join(', ');
-  const whereSql = `WHERE patientId IN (${placeholders}) OR accountId IN (${placeholders})`;
+  const whereSql = `WHERE patientId IN (${placeholders}) OR ((patientId IS NULL OR patientId = '' OR patientId = accountId) AND accountId IN (${placeholders}))`;
   const allParams = [...params, ...validIds, ...validIds];
 
   try {

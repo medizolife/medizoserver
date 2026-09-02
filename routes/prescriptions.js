@@ -133,35 +133,28 @@ router.get('/', auth, async (req, res) => {
       // Helper to safely resolve patient name without wiping stored prescription data
       const resolvePatientData = async (prescription) => {
         let patient = null;
-        let profile = null;
         try {
           if (prescription.patientId) {
-            patient = await findUserById(prescription.patientId);
-            if (!patient) {
-              try {
-                profile = await getFamilyProfileById(prescription.patientId);
-              } catch (e) {}
-            }
+            patient = await resolvePatient(prescription.patientId);
           }
           if (!patient && prescription.accountId) {
-            patient = await findUserById(prescription.accountId);
+            patient = await resolvePatient(prescription.accountId);
           }
         } catch (e) {}
 
-        let resolvedName = '';
-        if (patient && (patient.firstName || patient.lastName)) {
-          resolvedName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim();
-        } else if (profile && (profile.firstName || profile.lastName)) {
-          resolvedName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-        }
+        let resolvedName = patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() : '';
         if (!resolvedName || resolvedName.toLowerCase() === 'unknown patient') {
           resolvedName = (prescription.patientName && prescription.patientName.toLowerCase() !== 'unknown patient')
             ? prescription.patientName.trim()
             : 'Patient';
         }
 
-        const phone = patient?.phone || patient?.contactNumber || patient?.mobile || profile?.phone || prescription.patientPhone || prescription.contactNumber || 'N/A';
+        const phone = patient?.phone || patient?.contactNumber || prescription.patientPhone || prescription.contactNumber || 'N/A';
         const email = patient?.email || prescription.patientEmail || 'N/A';
+        const gender = patient?.gender || prescription.patientGender || '';
+        const age = patient?.dateOfBirth 
+          ? String(Math.floor((Date.now() - new Date(patient.dateOfBirth).getTime()) / (365.25 * 86400000))) 
+          : (patient?.age || prescription.patientAge || '');
 
         return {
           ...prescription,
@@ -169,7 +162,9 @@ router.get('/', auth, async (req, res) => {
           patientEmail: email,
           patientMobile: phone,
           patientPhone: phone,
-          contactNumber: phone
+          contactNumber: phone,
+          patientGender: gender,
+          patientAge: age
         };
       };
 
@@ -989,12 +984,37 @@ router.get('/:id', auth, async (req, res) => {
     if (prescription.patientId) {
       patient = await resolvePatient(prescription.patientId);
     }
+    if (!patient && prescription.accountId) {
+      patient = await resolvePatient(prescription.accountId);
+    }
+
+    let doctorUser = null;
+    if (prescription.doctorId) {
+      doctorUser = await findUserById(prescription.doctorId);
+    }
+
+    const pAge = patient?.dateOfBirth 
+      ? String(Math.floor((Date.now() - new Date(patient.dateOfBirth).getTime()) / (365.25 * 86400000))) 
+      : (patient?.age || prescription.patientAge);
+
+    const docName = doctorUser ? `Dr. ${doctorUser.firstName || ''} ${doctorUser.lastName || ''}`.trim() : prescription.doctorName;
 
     const enhanced = {
       ...prescription,
       patientName: patient ? `${patient.firstName || ''} ${patient.lastName || ''}`.trim() || prescription.patientName : prescription.patientName,
       patientDOB: patient?.dateOfBirth || prescription.patientDOB,
       patientGender: patient?.gender || prescription.patientGender,
+      patientAge: pAge || '',
+      patientEmail: patient?.email || prescription.patientEmail,
+      patientPhone: patient?.phone || patient?.contactNumber || prescription.patientPhone,
+      doctorName: (docName && docName !== 'Dr.') ? docName : (prescription.doctorName || 'Attending Physician'),
+      doctorSpecialization: doctorUser?.specialization || prescription.doctorSpecialization || 'General Physician',
+      doctorLicenseNumber: doctorUser?.licenseNumber || prescription.doctorLicenseNumber || '',
+      doctorClinicName: doctorUser?.clinicName || prescription.doctorClinicName || '',
+      doctorClinicAddress: doctorUser?.clinicAddress || prescription.doctorClinicAddress || '',
+      doctorPhone: doctorUser?.phone || doctorUser?.contactNumber || prescription.doctorPhone || '',
+      doctorStamp: doctorUser?.stamp || prescription.doctorStamp || '',
+      doctorSignature: doctorUser?.signature || prescription.doctorSignature || '',
     };
     
     res.json(enhanced);

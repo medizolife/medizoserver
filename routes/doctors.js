@@ -207,6 +207,13 @@ router.put('/profile', doctor, async (req, res) => {
     if (!finalDoctor) {
       return res.status(404).json({ message: 'Doctor profile not found' });
     }
+
+    try {
+      const { syncDoctorProfileUpdates } = require('../services/patientResolver');
+      await syncDoctorProfileUpdates(doctorId, req.body);
+    } catch (syncErr) {
+      console.warn('syncDoctorProfileUpdates warning in doctors.js PUT /profile:', syncErr);
+    }
     
     const { password, ...doctorData } = finalDoctor;
     res.json(doctorData);

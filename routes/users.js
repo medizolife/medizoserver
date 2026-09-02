@@ -8,7 +8,7 @@ const { findPrescriptionsByDoctorId } = require('../models/prescription');
 const { auth, doctor, patient } = require('../middleware/auth');
 const { getFamilyProfilesByAccountId, getFamilyProfileById, getProfileByDisplayId } = require('../models/familyProfile');
 const { canAccessPatientData } = require('../services/authzService');
-const { resolvePatient, syncPatientProfileUpdates } = require('../services/patientResolver');
+const { resolvePatient, syncPatientProfileUpdates, syncDoctorProfileUpdates } = require('../services/patientResolver');
 
 // Configure multer for profile picture uploads
 const storage = multer.memoryStorage(); // Use memory storage for serverless compatibility
@@ -651,7 +651,11 @@ router.put('/profile', auth, async (req, res) => {
     const updateData = {
       firstName,
       lastName,
-      contactNumber,
+      contactNumber: contactNumber || phone,
+      phone: phone || contactNumber,
+      address,
+      gender: gender !== undefined ? String(gender).trim().toLowerCase() : undefined,
+      dateOfBirth,
       // Location coordinates & address (available to all users for nearby discovery & clinic tracking)
       clinicLatitude,
       clinicLongitude,
@@ -677,7 +681,12 @@ router.put('/profile', auth, async (req, res) => {
         facebook,
         instagram
       }),
-      ...(req.user.role === 'patient' && { dateOfBirth, address, phone, bloodType, allergies, chronicConditions, emergencyContact, gender, diseaseHistory })
+      // Medical fields
+      bloodType,
+      allergies,
+      chronicConditions,
+      emergencyContact,
+      diseaseHistory
     };
 
     // Remove undefined values
@@ -698,6 +707,12 @@ router.put('/profile', auth, async (req, res) => {
         await syncPatientProfileUpdates(req.user.id, updateData);
       } catch (syncErr) {
         console.warn('syncPatientProfileUpdates warning in PUT /profile:', syncErr);
+      }
+    } else if (req.user.role === 'doctor') {
+      try {
+        await syncDoctorProfileUpdates(req.user.id, updateData);
+      } catch (docSyncErr) {
+        console.warn('syncDoctorProfileUpdates warning in PUT /profile:', docSyncErr);
       }
     }
 

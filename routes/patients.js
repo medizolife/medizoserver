@@ -4,7 +4,7 @@ const { findUserById, updateUser, getUsers } = require('../models/user');
 const { patient, auth, doctor } = require('../middleware/auth');
 const { findPrescriptionsByDoctorId, findPrescriptionsByPatientId } = require('../models/prescription');
 const { getFamilyProfileById, getFamilyProfilesByAccountId } = require('../models/familyProfile');
-const { syncPatientProfileUpdates } = require('../services/patientResolver');
+const { resolvePatient, syncPatientProfileUpdates } = require('../services/patientResolver');
 
 /**
  * @route   GET /api/patients
@@ -382,33 +382,30 @@ router.put('/:id/medical-info', auth, async (req, res) => {
     const patientId = req.params.id;
     const userRole = req.user.role;
 
-    if (userRole !== 'doctor') {
+    if (userRole !== 'doctor' && userRole !== 'admin') {
       return res.status(403).json({ message: 'Access denied. Doctor role required.' });
     }
 
     const { allergies, medicalHistory, emergencyContact, bloodType, insurance } = req.body;
 
-    // Find the patient
-    const patient = await findUserById(patientId);
-    
-    if (!patient || patient.role !== 'patient') {
+    // Resolve patient (handles both primary users and family profiles)
+    const existingPatient = await resolvePatient(patientId);
+    if (!existingPatient) {
       return res.status(404).json({ message: 'Patient not found' });
     }
 
-    // Update patient medical information
-    const updatedPatient = await updateUser(patientId, {
-      allergies: allergies || patient.allergies || [],
-      medicalHistory: medicalHistory || patient.medicalHistory || [],
-      emergencyContact: emergencyContact || patient.emergencyContact || null,
-      bloodType: bloodType || patient.bloodType || null,
-      insurance: insurance || patient.insurance || null
-    });
+    const updateData = {};
+    if (allergies !== undefined) updateData.allergies = allergies;
+    if (medicalHistory !== undefined) updateData.medicalHistory = medicalHistory;
+    if (emergencyContact !== undefined) updateData.emergencyContact = emergencyContact;
+    if (bloodType !== undefined) updateData.bloodType = bloodType;
+    if (insurance !== undefined) updateData.insurance = insurance;
 
-    if (!updatedPatient) {
-      return res.status(404).json({ message: 'Failed to update patient' });
-    }
+    // Synchronize across users, family_profiles, and prescriptions
+    const { user, familyProfile } = await syncPatientProfileUpdates(patientId, updateData);
+    const updated = await resolvePatient(patientId);
 
-    res.json(updatedPatient);
+    res.json(updated || familyProfile || user || { success: true });
   } catch (error) {
     console.error('Update patient medical info error:', error);
     res.status(500).json({ message: 'Server error' });
