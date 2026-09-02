@@ -207,7 +207,6 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
             const isDownload = res.req?.query?.download === 'true';
             const dispositionType = isDownload ? 'attachment' : 'inline';
             res.setHeader('Content-Disposition', `${dispositionType}; filename="prescription-${prescriptionId}.pdf"`);
-            res.setHeader('Access-Control-Allow-Origin', '*');
             res.send(pdfBuffer);
           }
           resolve(pdfBuffer);

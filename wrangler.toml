@@ -11,10 +11,9 @@ database_id = "206ec373-b5bb-4ec4-8304-778692299181"
 
 [vars]
 CLIENT_URL = "https://medizo.life"
-JWT_SECRET = "medizo_jwt_secret_key_2026_health"
 CLOUDFLARE_ACCOUNT_ID = "2f740823719b4ab11c6b134a71e7a3b9"
 CLOUDFLARE_D1_DATABASE_ID = "206ec373-b5bb-4ec4-8304-778692299181"
 DIGILOCKER_CLIENT_ID = "MK0F1D807D"
-DIGILOCKER_CLIENT_SECRET = "e921e97dc309c929ef4f"
-DIGILOCKER_REDIRECT_URI = "https://medizoserver.vercel.app/api/digilocker/callback"
+DIGILOCKER_REDIRECT_URI = "https://api.medizo.life/api/digilocker/callback"
 DIGILOCKER_BASE_URL = "https://digilocker.meripehchaan.gov.in"
+# JWT_SECRET and DIGILOCKER_CLIENT_SECRET are set as encrypted wrangler secrets
