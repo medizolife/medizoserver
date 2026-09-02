@@ -1466,17 +1466,25 @@ router.get(['/public/:id/download', '/public/:id/pdf'], async (req, res) => {
     }
     
     let patient = await resolvePatient(prescription.patientId);
+    if (!patient && prescription.accountId) {
+      patient = await resolvePatient(prescription.accountId);
+    }
     let doctorUser = await findUserById(prescription.doctorId);
     
     if (patient) {
-      if (!patient.dateOfBirth && prescription.patientDOB) patient.dateOfBirth = prescription.patientDOB;
-      if (!patient.age && prescription.patientAge) patient.age = prescription.patientAge;
       if (patient.gender) {
         prescription.patientGender = patient.gender;
       } else if (prescription.patientGender) {
         patient.gender = prescription.patientGender;
       }
-      if (prescription.patientName && !patient.firstName) {
+      if (patient.dateOfBirth) prescription.patientDOB = patient.dateOfBirth;
+      if (patient.age) prescription.patientAge = patient.age;
+      if (patient.phone || patient.contactNumber) prescription.patientPhone = patient.phone || patient.contactNumber;
+      if (patient.address) prescription.patientAddress = patient.address;
+      const fullName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim();
+      if (fullName) {
+        prescription.patientName = fullName;
+      } else if (prescription.patientName && !patient.firstName) {
         patient.firstName = prescription.patientName.split(' ')[0] || 'Patient';
         patient.lastName = prescription.patientName.split(' ').slice(1).join(' ') || '';
       }
@@ -1553,17 +1561,25 @@ router.get(['/:id/download', '/:id/pdf'], auth, async (req, res) => {
     
     // Get patient and doctor details (with robust fallbacks if user lookup fails)
     let patient = await resolvePatient(prescription.patientId);
+    if (!patient && prescription.accountId) {
+      patient = await resolvePatient(prescription.accountId);
+    }
     let doctorUser = await findUserById(prescription.doctorId);
     
     if (patient) {
-      if (!patient.dateOfBirth && prescription.patientDOB) patient.dateOfBirth = prescription.patientDOB;
-      if (!patient.age && prescription.patientAge) patient.age = prescription.patientAge;
       if (patient.gender) {
         prescription.patientGender = patient.gender;
       } else if (prescription.patientGender) {
         patient.gender = prescription.patientGender;
       }
-      if (prescription.patientName && !patient.firstName) {
+      if (patient.dateOfBirth) prescription.patientDOB = patient.dateOfBirth;
+      if (patient.age) prescription.patientAge = patient.age;
+      if (patient.phone || patient.contactNumber) prescription.patientPhone = patient.phone || patient.contactNumber;
+      if (patient.address) prescription.patientAddress = patient.address;
+      const fullName = `${patient.firstName || ''} ${patient.lastName || ''}`.trim();
+      if (fullName) {
+        prescription.patientName = fullName;
+      } else if (prescription.patientName && !patient.firstName) {
         patient.firstName = prescription.patientName.split(' ')[0] || 'Patient';
         patient.lastName = prescription.patientName.split(' ').slice(1).join(' ') || '';
       }
