@@ -484,24 +484,39 @@ async function generatePrescriptionPDF(res, prescriptionId, prescription, patien
         const L1 = M + 8, L2 = M + CW * 0.50;
         
         const pRows = [];
+        // Row 1: Name & Patient ID
         pRows.push([{ label: 'Name:', val: pName }, { label: 'Patient ID:', val: pId }]);
         
-        const col1_2 = { label: 'Age/Gender:', val: pAgeGender };
-        const col2_2 = pBlood ? { label: 'Blood Type:', val: pBlood } : (pPhone ? { label: 'Contact:', val: pPhone } : null);
-        pRows.push([col1_2, col2_2]);
+        // Row 2: Age & Gender (Separated into distinct inputs/fields)
+        pRows.push([
+          { label: 'Age:', val: pAge || 'N/A' },
+          { label: 'Gender:', val: pGender || 'N/A' }
+        ]);
 
-        if (pAddr || (pPhone && col2_2?.label !== 'Contact:')) {
-          const col1_3 = pAddr ? { label: 'Address:', val: pAddr } : null;
-          const col2_3 = (pPhone && col2_2?.label !== 'Contact:') ? { label: 'Contact:', val: pPhone } : (pEmergency ? { label: 'Emergency:', val: pEmergency } : null);
-          if (col1_3 || col2_3) pRows.push([col1_3, col2_3]);
+        // Row 3: Blood Type & Contact
+        const col1_3 = pBlood ? { label: 'Blood Type:', val: pBlood } : (pPhone ? { label: 'Contact:', val: pPhone } : null);
+        const col2_3 = (pBlood && pPhone) ? { label: 'Contact:', val: pPhone } : (pEmergency ? { label: 'Emergency:', val: pEmergency } : null);
+        if (col1_3 || col2_3) {
+          pRows.push([col1_3, col2_3]);
         }
 
+        // Row 4: Address & Emergency Contact
+        const usedContact = pRows.some(r => r[0]?.label === 'Contact:' || r[1]?.label === 'Contact:');
+        const usedEmergency = pRows.some(r => r[0]?.label === 'Emergency:' || r[1]?.label === 'Emergency:');
+
+        const col1_4 = pAddr ? { label: 'Address:', val: pAddr } : (!usedContact && pPhone ? { label: 'Contact:', val: pPhone } : null);
+        const col2_4 = (!usedEmergency && pEmergency) ? { label: 'Emergency:', val: pEmergency } : null;
+        if (col1_4 || col2_4) {
+          pRows.push([col1_4, col2_4]);
+        }
+
+        // Row 5: Weight / Height if available
         const whStr = [pWeight, pHeight].filter(Boolean).join(' / ');
-        const hasEmergencyUnused = pEmergency && !pRows.some(r => r[1]?.label === 'Emergency:');
-        if (whStr || hasEmergencyUnused) {
+        const stillUnusedEmergency = pEmergency && !pRows.some(r => r[0]?.label === 'Emergency:' || r[1]?.label === 'Emergency:');
+        if (whStr || stillUnusedEmergency) {
           pRows.push([
             whStr ? { label: 'Weight/Height:', val: whStr } : null,
-            hasEmergencyUnused ? { label: 'Emergency:', val: pEmergency } : null
+            stillUnusedEmergency ? { label: 'Emergency:', val: pEmergency } : null
           ]);
         }
 
